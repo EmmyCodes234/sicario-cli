@@ -1,2 +1,7 @@
 //! Suppression learner module — pattern recording and auto-suppression suggestions.
-//! Implementation will be added in a later task.
+
+pub mod learner;
+
+pub use learner::{
+    LearnedSuppression, SuppressionLearner, SuppressionLearning, SuppressionSuggestion,
+};

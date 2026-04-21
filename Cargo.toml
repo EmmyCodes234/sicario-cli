@@ -1,5 +1,5 @@
 [workspace]
-members = ["sicario-cli"]
+members = ["sicario-cli", "sicario-cloud"]
 resolver = "2"
 
 [workspace.package]
@@ -107,3 +107,10 @@ comfy-table = "7.1"
 # CLI framework
 clap = { version = "4.5", features = ["derive", "env", "string"] }
 clap_complete = "4.5"
+
+# LSP server
+lsp-server = "0.7"
+lsp-types = "0.95"
+
+# System info (benchmarking)
+sysinfo = "0.30"

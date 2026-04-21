@@ -1,0 +1,75 @@
+{
+  "name": "sicario-vscode",
+  "displayName": "Sicario Security Scanner",
+  "description": "Real-time SAST security scanning powered by Sicario",
+  "version": "0.1.0",
+  "publisher": "sicario",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/EmmyCodes234/sicario-cli"
+  },
+  "engines": {
+    "vscode": "^1.75.0"
+  },
+  "categories": [
+    "Linters",
+    "Programming Languages"
+  ],
+  "keywords": [
+    "security",
+    "sast",
+    "vulnerability",
+    "scanner",
+    "linter"
+  ],
+  "activationEvents": [
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact",
+    "onLanguage:python",
+    "onLanguage:rust",
+    "onLanguage:go",
+    "onLanguage:java"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "sicario.scanWorkspace",
+        "title": "Sicario: Scan Workspace"
+      }
+    ],
+    "configuration": {
+      "title": "Sicario",
+      "properties": {
+        "sicario.path": {
+          "type": "string",
+          "default": "sicario",
+          "description": "Path to the sicario binary"
+        },
+        "sicario.severityThreshold": {
+          "type": "string",
+          "enum": ["info", "low", "medium", "high", "critical"],
+          "default": "low",
+          "description": "Minimum severity level to display"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package"
+  },
+  "dependencies": {
+    "vscode-languageclient": "^9.0.1"
+  },
+  "devDependencies": {
+    "@types/vscode": "^1.75.0",
+    "@types/node": "^18.0.0",
+    "typescript": "^5.3.0",
+    "@vscode/vsce": "^2.22.0"
+  }
+}

@@ -1,0 +1,928 @@
+openapi: 3.0.3
+info:
+  title: Sicario Cloud Platform API
+  description: REST API for centralized findings management, triage workflows, analytics, and team collaboration.
+  version: "1.0.0"
+  contact:
+    name: Sicario Team
+    url: https://github.com/EmmyCodes234/sicario-cli
+  license:
+    name: MIT
+
+servers:
+  - url: https://api.sicario.dev/api/v1
+    description: Production
+  - url: http://localhost:3000/api/v1
+    description: Local development
+
+security:
+  - bearerAuth: []
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Severity:
+      type: string
+      enum: [Info, Low, Medium, High, Critical]
+
+    TriageState:
+      type: string
+      enum: [Open, Reviewing, ToFix, Fixed, Ignored, AutoIgnored]
+
+    WebhookDeliveryType:
+      type: string
+      enum: [slack, teams, pagerduty, http]
+
+    WebhookEventType:
+      type: string
+      enum: [critical_finding, sla_breach, scan_failure]
+
+    ScanMetadata:
+      type: object
+      required: [repository, branch, commit_sha, timestamp, duration_ms, rules_loaded, files_scanned]
+      properties:
+        repository:
+          type: string
+        branch:
+          type: string
+        commit_sha:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int64
+        rules_loaded:
+          type: integer
+        files_scanned:
+          type: integer
+        language_breakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        tags:
+          type: array
+          items:
+            type: string
+
+    Finding:
+      type: object
+      required: [id, rule_id, rule_name, file_path, line, column, snippet, severity, confidence_score]
+      properties:
+        id:
+          type: string
+          format: uuid
+        scan_id:
+          type: string
+          format: uuid
+        rule_id:
+          type: string
+        rule_name:
+          type: string
+        file_path:
+          type: string
+        line:
+          type: integer
+        column:
+          type: integer
+        end_line:
+          type: integer
+          nullable: true
+        end_column:
+          type: integer
+          nullable: true
+        snippet:
+          type: string
+        severity:
+          $ref: '#/components/schemas/Severity'
+        confidence_score:
+          type: number
+          format: double
+          minimum: 0.0
+          maximum: 1.0
+        reachable:
+          type: boolean
+        cloud_exposed:
+          type: boolean
+          nullable: true
+        cwe_id:
+          type: string
+          nullable: true
+        owasp_category:
+          type: string
+          nullable: true
+        fingerprint:
+          type: string
+        triage_state:
+          $ref: '#/components/schemas/TriageState'
+        triage_note:
+          type: string
+          nullable: true
+        assigned_to:
+          type: string
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    ScanReport:
+      type: object
+      required: [findings, metadata]
+      properties:
+        findings:
+          type: array
+          items:
+            $ref: '#/components/schemas/Finding'
+        metadata:
+          $ref: '#/components/schemas/ScanMetadata'
+
+    Scan:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        repository:
+          type: string
+        branch:
+          type: string
+        commit_sha:
+          type: string
+        timestamp:
+          type: string
+          format: date-time
+        duration_ms:
+          type: integer
+          format: int64
+        rules_loaded:
+          type: integer
+        files_scanned:
+          type: integer
+        language_breakdown:
+          type: object
+          additionalProperties:
+            type: integer
+        tags:
+          type: array
+          items:
+            type: string
+        findings_count:
+          type: integer
+        critical_count:
+          type: integer
+        high_count:
+          type: integer
+
+    Project:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        repository_url:
+          type: string
+        description:
+          type: string
+        team_id:
+          type: string
+          format: uuid
+          nullable: true
+        created_at:
+          type: string
+          format: date-time
+
+    Team:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        org_id:
+          type: string
+          format: uuid
+        created_at:
+          type: string
+          format: date-time
+
+    WebhookConfig:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        org_id:
+          type: string
+          format: uuid
+        url:
+          type: string
+        events:
+          type: array
+          items:
+            $ref: '#/components/schemas/WebhookEventType'
+        delivery_type:
+          $ref: '#/components/schemas/WebhookDeliveryType'
+        secret:
+          type: string
+          nullable: true
+        enabled:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+
+    AnalyticsOverview:
+      type: object
+      properties:
+        total_findings:
+          type: integer
+        open_findings:
+          type: integer
+        fixed_findings:
+          type: integer
+        ignored_findings:
+          type: integer
+        critical_count:
+          type: integer
+        high_count:
+          type: integer
+        medium_count:
+          type: integer
+        low_count:
+          type: integer
+        info_count:
+          type: integer
+        total_scans:
+          type: integer
+        avg_scan_duration_ms:
+          type: integer
+          format: int64
+
+    TrendDataPoint:
+      type: object
+      properties:
+        timestamp:
+          type: string
+          format: date-time
+        open_findings:
+          type: integer
+        new_findings:
+          type: integer
+        fixed_findings:
+          type: integer
+
+    MttrMetrics:
+      type: object
+      properties:
+        overall_mttr_hours:
+          type: number
+          format: double
+        by_severity:
+          type: object
+          additionalProperties:
+            type: number
+            format: double
+
+    Paginated:
+      type: object
+      properties:
+        page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    ExportSchema:
+      type: object
+      properties:
+        version:
+          type: string
+        tables:
+          type: array
+          items:
+            type: object
+            properties:
+              name:
+                type: string
+              columns:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                    type:
+                      type: string
+                    description:
+                      type: string
+
+    Error:
+      type: object
+      required: [error, message]
+      properties:
+        error:
+          type: string
+        message:
+          type: string
+
+paths:
+  /scans:
+    post:
+      summary: Upload scan report
+      operationId: createScan
+      tags: [Scans]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ScanReport'
+      responses:
+        '201':
+          description: Scan created
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  scan_id:
+                    type: string
+                  dashboard_url:
+                    type: string
+                    nullable: true
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      summary: List scan history
+      operationId: listScans
+      tags: [Scans]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: repository
+          in: query
+          schema:
+            type: string
+        - name: branch
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Paginated scan list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Scan'
+
+  /scans/{id}:
+    get:
+      summary: Get scan details
+      operationId: getScan
+      tags: [Scans]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Scan details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Scan'
+        '404':
+          description: Not found
+
+  /findings:
+    get:
+      summary: List findings
+      operationId: listFindings
+      tags: [Findings]
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: per_page
+          in: query
+          schema:
+            type: integer
+            default: 20
+        - name: severity
+          in: query
+          schema:
+            $ref: '#/components/schemas/Severity'
+        - name: triage_state
+          in: query
+          schema:
+            $ref: '#/components/schemas/TriageState'
+        - name: confidence_min
+          in: query
+          schema:
+            type: number
+        - name: scan_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+        - name: project_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Paginated findings list
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/Paginated'
+                  - type: object
+                    properties:
+                      items:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Finding'
+
+  /findings/{id}:
+    get:
+      summary: Get finding details
+      operationId: getFinding
+      tags: [Findings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Finding details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Finding'
+        '404':
+          description: Not found
+    patch:
+      summary: Update finding triage state
+      operationId: triageFinding
+      tags: [Findings]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                triage_state:
+                  $ref: '#/components/schemas/TriageState'
+                triage_note:
+                  type: string
+                assigned_to:
+                  type: string
+      responses:
+        '200':
+          description: Finding updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Finding'
+
+  /findings/bulk-triage:
+    post:
+      summary: Bulk triage findings
+      operationId: bulkTriageFindings
+      tags: [Findings]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [finding_ids, triage_state]
+              properties:
+                finding_ids:
+                  type: array
+                  items:
+                    type: string
+                    format: uuid
+                triage_state:
+                  $ref: '#/components/schemas/TriageState'
+                triage_note:
+                  type: string
+      responses:
+        '200':
+          description: Bulk triage result
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated_count:
+                    type: integer
+
+  /analytics/overview:
+    get:
+      summary: Dashboard overview metrics
+      operationId: getAnalyticsOverview
+      tags: [Analytics]
+      parameters:
+        - name: project_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Overview metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AnalyticsOverview'
+
+  /analytics/trends:
+    get:
+      summary: Time-series trend data
+      operationId: getAnalyticsTrends
+      tags: [Analytics]
+      parameters:
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: interval
+          in: query
+          schema:
+            type: string
+            enum: [day, week, month]
+            default: day
+      responses:
+        '200':
+          description: Trend data points
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/TrendDataPoint'
+
+  /analytics/mttr:
+    get:
+      summary: Mean time to resolve metrics
+      operationId: getMttr
+      tags: [Analytics]
+      responses:
+        '200':
+          description: MTTR metrics
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/MttrMetrics'
+
+  /projects:
+    get:
+      summary: List projects
+      operationId: listProjects
+      tags: [Projects]
+      responses:
+        '200':
+          description: Project list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Project'
+    post:
+      summary: Create project
+      operationId: createProject
+      tags: [Projects]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name]
+              properties:
+                name:
+                  type: string
+                repository_url:
+                  type: string
+                description:
+                  type: string
+                team_id:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Project created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+  /projects/{id}:
+    get:
+      summary: Get project details
+      operationId: getProject
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: Project details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+    patch:
+      summary: Update project
+      operationId: updateProject
+      tags: [Projects]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name:
+                  type: string
+                repository_url:
+                  type: string
+                description:
+                  type: string
+                team_id:
+                  type: string
+                  format: uuid
+      responses:
+        '200':
+          description: Project updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Project'
+
+  /teams:
+    get:
+      summary: List teams
+      operationId: listTeams
+      tags: [Teams]
+      responses:
+        '200':
+          description: Team list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/Team'
+    post:
+      summary: Create team
+      operationId: createTeam
+      tags: [Teams]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [name, org_id]
+              properties:
+                name:
+                  type: string
+                org_id:
+                  type: string
+                  format: uuid
+      responses:
+        '201':
+          description: Team created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Team'
+
+  /webhooks:
+    get:
+      summary: List webhook configurations
+      operationId: listWebhooks
+      tags: [Webhooks]
+      responses:
+        '200':
+          description: Webhook list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/WebhookConfig'
+    post:
+      summary: Create webhook
+      operationId: createWebhook
+      tags: [Webhooks]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [url, events, delivery_type]
+              properties:
+                url:
+                  type: string
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/WebhookEventType'
+                delivery_type:
+                  $ref: '#/components/schemas/WebhookDeliveryType'
+                secret:
+                  type: string
+      responses:
+        '201':
+          description: Webhook created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfig'
+
+  /webhooks/{id}:
+    patch:
+      summary: Update webhook
+      operationId: updateWebhook
+      tags: [Webhooks]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                url:
+                  type: string
+                events:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/WebhookEventType'
+                delivery_type:
+                  $ref: '#/components/schemas/WebhookDeliveryType'
+                secret:
+                  type: string
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Webhook updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/WebhookConfig'
+    delete:
+      summary: Delete webhook
+      operationId: deleteWebhook
+      tags: [Webhooks]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '204':
+          description: Webhook deleted
+
+  /export/findings.csv:
+    get:
+      summary: Export findings as CSV
+      operationId: exportFindingsCsv
+      tags: [Export]
+      parameters:
+        - name: severity
+          in: query
+          schema:
+            $ref: '#/components/schemas/Severity'
+        - name: triage_state
+          in: query
+          schema:
+            $ref: '#/components/schemas/TriageState'
+        - name: project_id
+          in: query
+          schema:
+            type: string
+            format: uuid
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  /export/scans.csv:
+    get:
+      summary: Export scan history as CSV
+      operationId: exportScansCsv
+      tags: [Export]
+      parameters:
+        - name: repository
+          in: query
+          schema:
+            type: string
+        - name: branch
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: CSV file
+          content:
+            text/csv:
+              schema:
+                type: string
+
+  /export/schema:
+    get:
+      summary: Documented data schema for BI tools
+      operationId: getExportSchema
+      tags: [Export]
+      responses:
+        '200':
+          description: Data schema
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExportSchema'

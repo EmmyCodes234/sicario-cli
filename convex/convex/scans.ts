@@ -1,0 +1,133 @@
+import { mutation, query } from "./_generated/server";
+import { v } from "convex/values";
+
+export const insert = mutation({
+  args: {
+    scanId: v.string(),
+    report: v.any(),
+  },
+  handler: async (ctx, args) => {
+    const { scanId, report } = args;
+    const meta = report.metadata;
+    const now = new Date().toISOString();
+
+    // Insert the scan record
+    await ctx.db.insert("scans", {
+      scanId,
+      repository: meta.repository ?? "",
+      branch: meta.branch ?? "",
+      commitSha: meta.commit_sha ?? "",
+      timestamp: meta.timestamp ?? now,
+      durationMs: meta.duration_ms ?? 0,
+      rulesLoaded: meta.rules_loaded ?? 0,
+      filesScanned: meta.files_scanned ?? 0,
+      languageBreakdown: meta.language_breakdown ?? {},
+      tags: meta.tags ?? [],
+      createdAt: now,
+    });
+
+    // Insert each finding
+    for (const f of report.findings ?? []) {
+      await ctx.db.insert("findings", {
+        findingId: f.id ?? "",
+        scanId,
+        ruleId: f.rule_id ?? "",
+        ruleName: f.rule_name ?? "",
+        filePath: typeof f.file_path === "string" ? f.file_path : "",
+        line: f.line ?? 0,
+        column: f.column ?? 0,
+        endLine: f.end_line ?? undefined,
+        endColumn: f.end_column ?? undefined,
+        snippet: f.snippet ?? "",
+        severity: typeof f.severity === "string" ? f.severity : (f.severity ?? "Info"),
+        confidenceScore: f.confidence_score ?? 0,
+        reachable: f.reachable ?? false,
+        cloudExposed: f.cloud_exposed ?? undefined,
+        cweId: f.cwe_id ?? undefined,
+        owaspCategory: f.owasp_category ?? undefined,
+        fingerprint: f.fingerprint ?? "",
+        triageState: "Open",
+        createdAt: now,
+        updatedAt: now,
+      });
+    }
+
+    return { scanId };
+  },
+});
+
+export const get = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    const scan = await ctx.db
+      .query("scans")
+      .withIndex("by_scanId", (q) => q.eq("scanId", args.id))
+      .first();
+    if (!scan) return null;
+
+    // Count findings
+    const findings = await ctx.db
+      .query("findings")
+      .withIndex("by_scanId", (q) => q.eq("scanId", args.id))
+      .collect();
+
+    const findingsCount = findings.length;
+    const criticalCount = findings.filter((f) => f.severity === "Critical").length;
+    const highCount = findings.filter((f) => f.severity === "High").length;
+
+    return {
+      id: scan.scanId,
+      repository: scan.repository,
+      branch: scan.branch,
+      commit_sha: scan.commitSha,
+      timestamp: scan.timestamp,
+      duration_ms: scan.durationMs,
+      rules_loaded: scan.rulesLoaded,
+      files_scanned: scan.filesScanned,
+      language_breakdown: scan.languageBreakdown,
+      tags: scan.tags,
+      findings_count: findingsCount,
+      critical_count: criticalCount,
+      high_count: highCount,
+    };
+  },
+});
+
+export const list = query({
+  args: {
+    page: v.optional(v.number()),
+    perPage: v.optional(v.number()),
+    repository: v.optional(v.string()),
+    branch: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const page = args.page ?? 1;
+    const perPage = args.perPage ?? 20;
+
+    let scansQuery = ctx.db.query("scans").order("desc");
+    const allScans = await scansQuery.collect();
+
+    const filtered = allScans.filter((s) => {
+      if (args.repository && s.repository !== args.repository) return false;
+      if (args.branch && s.branch !== args.branch) return false;
+      return true;
+    });
+
+    const total = filtered.length;
+    const offset = (page - 1) * perPage;
+    const items = filtered.slice(offset, offset + perPage).map((s) => ({
+      id: s.scanId,
+      repository: s.repository,
+      branch: s.branch,
+      commit_sha: s.commitSha,
+      timestamp: s.timestamp,
+      duration_ms: s.durationMs,
+      rules_loaded: s.rulesLoaded,
+      files_scanned: s.filesScanned,
+      language_breakdown: s.languageBreakdown,
+      tags: s.tags,
+    }));
+
+    return { page, per_page: perPage, total, items };
+  },
+});

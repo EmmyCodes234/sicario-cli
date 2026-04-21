@@ -15,6 +15,16 @@ pub mod auth_property_tests;
 
 pub use auth_module::AuthModule;
 pub use pkce::{compute_code_challenge, generate_code_verifier};
+pub use token_store::TokenStore;
+
+/// Information about the currently authenticated cloud user.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CloudUserInfo {
+    pub username: String,
+    pub email: String,
+    pub organization: String,
+    pub plan_tier: String,
+}
 
 /// Response from the device authorization endpoint (RFC 8628 §3.2)
 #[derive(Debug, Clone, Serialize, Deserialize)]

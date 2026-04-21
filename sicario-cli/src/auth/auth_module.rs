@@ -241,4 +241,161 @@ impl AuthModule {
     pub fn token_store(&self) -> &TokenStore {
         &self.token_store
     }
+
+    // ── Cloud authentication methods ──────────────────────────────────────
+
+    /// Perform a browser-based OAuth login for Sicario Cloud.
+    ///
+    /// Uses the existing device flow mechanism with cloud-specific configuration.
+    /// The resulting token is stored as a cloud API token in the OS credential store.
+    pub fn cloud_login(&self) -> Result<()> {
+        let cloud_auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+            .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        let cloud_client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+            .unwrap_or_else(|_| "sicario-cli".to_string());
+
+        let code_verifier = super::pkce::generate_code_verifier();
+        let code_challenge = super::pkce::compute_code_challenge(&code_verifier);
+
+        let url = format!("{}/oauth/device/code", cloud_auth_url);
+        let resp = self
+            .http
+            .post(&url)
+            .form(&[
+                ("client_id", cloud_client_id.as_str()),
+                ("code_challenge", &code_challenge),
+                ("code_challenge_method", "S256"),
+                ("scope", "cloud"),
+            ])
+            .send();
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                bail!(
+                    "Could not reach Sicario Cloud auth server at {cloud_auth_url}: {e}\n\
+                     Sicario works fully offline — cloud features are optional."
+                );
+            }
+        };
+
+        if !resp.status().is_success() {
+            bail!(
+                "Cloud login request failed with status {}. \
+                 Sicario works fully offline — cloud features are optional.",
+                resp.status()
+            );
+        }
+
+        let raw: RawDeviceCodeResponse = resp.json()?;
+
+        eprintln!();
+        eprintln!("  Open this URL in your browser to authenticate:");
+        eprintln!("  {}", raw.verification_uri);
+        eprintln!();
+        eprintln!("  Enter code: {}", raw.user_code);
+        eprintln!();
+
+        // Poll for token
+        let token_url = format!("{}/oauth/token", cloud_auth_url);
+        let poll_interval = Duration::from_secs(raw.interval.max(1));
+        let deadline = if raw.expires_in > 0 {
+            Some(Instant::now() + Duration::from_secs(raw.expires_in))
+        } else {
+            Some(Instant::now() + Duration::from_secs(300)) // 5 min default
+        };
+
+        loop {
+            if let Some(dl) = deadline {
+                if Instant::now() >= dl {
+                    bail!("Login timed out — the device code expired before authentication completed.");
+                }
+            }
+
+            std::thread::sleep(poll_interval);
+
+            let resp = self
+                .http
+                .post(&token_url)
+                .form(&[
+                    ("grant_type", "urn:ietf:params:oauth:grant-type:device_code"),
+                    ("device_code", &raw.device_code),
+                    ("client_id", cloud_client_id.as_str()),
+                    ("code_verifier", &code_verifier),
+                ])
+                .send()?;
+
+            let raw_result: RawTokenResult = resp.json()?;
+            match raw_result {
+                RawTokenResult::Success(s) => {
+                    self.token_store.store_cloud_token(&s.access_token)?;
+                    eprintln!("  Logged in to Sicario Cloud successfully.");
+                    return Ok(());
+                }
+                RawTokenResult::Error(e) => match e.error.as_str() {
+                    "authorization_pending" | "slow_down" => continue,
+                    "access_denied" => bail!("Login denied by user."),
+                    "expired_token" => bail!("Device code expired."),
+                    other => {
+                        let desc = e
+                            .error_description
+                            .unwrap_or_else(|| "no description".to_string());
+                        bail!("Cloud login error '{}': {}", other, desc);
+                    }
+                },
+            }
+        }
+    }
+
+    /// Log out of Sicario Cloud by removing the stored cloud API token.
+    pub fn cloud_logout(&self) -> Result<()> {
+        self.token_store.clear_cloud_token()?;
+        Ok(())
+    }
+
+    /// Retrieve the currently authenticated cloud user's information.
+    ///
+    /// Calls `GET /api/v1/whoami` on the Sicario Cloud API.
+    pub fn cloud_whoami(&self) -> Result<super::CloudUserInfo> {
+        let cloud_url = std::env::var("SICARIO_CLOUD_URL")
+            .unwrap_or_else(|_| "https://api.sicario.dev".to_string());
+
+        let token = self
+            .token_store
+            .get_cloud_token()
+            .map_err(|_| anyhow!("Not logged in to Sicario Cloud. Run `sicario login` first."))?;
+
+        let url = format!("{}/api/v1/whoami", cloud_url.trim_end_matches('/'));
+        let resp = self
+            .http
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", token))
+            .send();
+
+        let resp = match resp {
+            Ok(r) => r,
+            Err(e) => {
+                bail!(
+                    "Could not reach Sicario Cloud API at {cloud_url}: {e}\n\
+                     Check your network connection or try `sicario login` again."
+                );
+            }
+        };
+
+        if resp.status() == reqwest::StatusCode::UNAUTHORIZED {
+            bail!("Cloud session expired or invalid. Run `sicario login` to re-authenticate.");
+        }
+
+        if !resp.status().is_success() {
+            bail!("Cloud whoami request failed with status {}", resp.status());
+        }
+
+        let info: super::CloudUserInfo = resp.json()?;
+        Ok(info)
+    }
+
+    /// Get the stored cloud API token, if any.
+    pub fn get_cloud_token(&self) -> Result<String> {
+        self.token_store.get_cloud_token()
+    }
 }

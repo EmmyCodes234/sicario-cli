@@ -84,10 +84,20 @@ tracing-subscriber.workspace = true
 clap.workspace = true
 clap_complete.workspace = true
 
+# LSP server
+lsp-server.workspace = true
+lsp-types.workspace = true
+
 # Professional output
 indicatif.workspace = true
 owo-colors.workspace = true
 comfy-table.workspace = true
+
+# System info (benchmarking)
+sysinfo.workspace = true
+
+# Temp files (rule test harness)
+tempfile.workspace = true
 
 [dev-dependencies]
 proptest.workspace = true

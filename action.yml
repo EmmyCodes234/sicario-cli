@@ -1,0 +1,166 @@
+name: "Sicario SAST Scan"
+description: "Run Sicario static application security testing on your codebase"
+author: "Sicario Team"
+
+branding:
+  icon: "shield"
+  color: "red"
+
+inputs:
+  severity-threshold:
+    description: "Minimum severity level to report (info, low, medium, high, critical)"
+    required: false
+    default: "low"
+  diff-base:
+    description: "Git ref to diff against for incremental scanning (e.g. origin/main)"
+    required: false
+    default: ""
+  format:
+    description: "Output format: text, json, or sarif"
+    required: false
+    default: "sarif"
+  scan-path:
+    description: "Path to scan (defaults to repository root)"
+    required: false
+    default: "."
+  version:
+    description: "Sicario version to install (e.g. v0.1.0). Defaults to latest release."
+    required: false
+    default: "latest"
+
+outputs:
+  findings-count:
+    description: "Total number of findings detected"
+    value: ${{ steps.scan.outputs.findings-count }}
+  exit-code:
+    description: "Sicario exit code (0=clean, 1=findings, 2=error)"
+    value: ${{ steps.scan.outputs.exit-code }}
+
+runs:
+  using: "composite"
+  steps:
+    # ── Cache the Sicario binary between workflow runs ──────────────────────
+    - name: Cache Sicario binary
+      id: cache-sicario
+      uses: actions/cache@v4
+      with:
+        path: ${{ runner.temp }}/sicario-bin
+        key: sicario-${{ runner.os }}-${{ inputs.version }}
+
+    # ── Install Sicario if not cached ──────────────────────────────────────
+    - name: Install Sicario
+      if: steps.cache-sicario.outputs.cache-hit != 'true'
+      shell: bash
+      env:
+        SICARIO_VERSION: ${{ inputs.version }}
+      run: |
+        set -euo pipefail
+
+        INSTALL_DIR="${{ runner.temp }}/sicario-bin"
+        mkdir -p "$INSTALL_DIR"
+
+        # Determine platform asset name
+        case "${{ runner.os }}" in
+          Linux)  ASSET="sicario-linux-x86_64" ;;
+          macOS)  ASSET="sicario-macos-x86_64" ;;
+          Windows) ASSET="sicario-windows-x86_64.exe" ;;
+          *) echo "::error::Unsupported runner OS: ${{ runner.os }}"; exit 1 ;;
+        esac
+
+        # Resolve version tag
+        REPO="EmmyCodes234/sicario-cli"
+        if [ "$SICARIO_VERSION" = "latest" ]; then
+          TAG=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" | grep '"tag_name"' | head -1 | cut -d'"' -f4)
+        else
+          TAG="$SICARIO_VERSION"
+        fi
+
+        echo "::notice::Installing Sicario ${TAG} (${ASSET})"
+
+        DOWNLOAD_URL="https://github.com/${REPO}/releases/download/${TAG}/${ASSET}"
+        curl -fsSL -o "${INSTALL_DIR}/sicario${ASSET##*sicario}" "$DOWNLOAD_URL" \
+          || { echo "::error::Failed to download Sicario from ${DOWNLOAD_URL}"; exit 1; }
+
+        # Make executable on Unix
+        if [ "${{ runner.os }}" != "Windows" ]; then
+          chmod +x "${INSTALL_DIR}/sicario"*
+        fi
+
+    # ── Add Sicario to PATH ────────────────────────────────────────────────
+    - name: Add Sicario to PATH
+      shell: bash
+      run: echo "${{ runner.temp }}/sicario-bin" >> "$GITHUB_PATH"
+
+    # ── Run the scan ───────────────────────────────────────────────────────
+    - name: Run Sicario scan
+      id: scan
+      shell: bash
+      env:
+        INPUT_SEVERITY_THRESHOLD: ${{ inputs.severity-threshold }}
+        INPUT_DIFF_BASE: ${{ inputs.diff-base }}
+        INPUT_FORMAT: ${{ inputs.format }}
+        INPUT_SCAN_PATH: ${{ inputs.scan-path }}
+      run: |
+        set -uo pipefail
+
+        ARGS=("scan")
+        ARGS+=("--dir" "$INPUT_SCAN_PATH")
+        ARGS+=("--severity-threshold" "$INPUT_SEVERITY_THRESHOLD")
+
+        # Diff-aware scanning
+        if [ -n "$INPUT_DIFF_BASE" ]; then
+          ARGS+=("--diff" "$INPUT_DIFF_BASE")
+        fi
+
+        # Output format
+        ARGS+=("--format" "$INPUT_FORMAT")
+
+        # Write SARIF to file for upload
+        SARIF_FILE=""
+        if [ "$INPUT_FORMAT" = "sarif" ]; then
+          SARIF_FILE="${{ runner.temp }}/sicario-results.sarif"
+          ARGS+=("--sarif-output" "$SARIF_FILE")
+        fi
+
+        echo "::group::Sicario scan command"
+        echo "sicario ${ARGS[*]}"
+        echo "::endgroup::"
+
+        # Run scan — capture exit code without failing the step
+        EXIT_CODE=0
+        sicario "${ARGS[@]}" || EXIT_CODE=$?
+
+        # Parse findings count from output
+        FINDINGS_COUNT=0
+        if [ "$INPUT_FORMAT" = "sarif" ] && [ -f "$SARIF_FILE" ]; then
+          # Count results array length from SARIF JSON
+          FINDINGS_COUNT=$(python3 -c "
+        import json, sys
+        try:
+            doc = json.load(open('$SARIF_FILE'))
+            count = sum(len(run.get('results', [])) for run in doc.get('runs', []))
+            print(count)
+        except Exception:
+            print(0)
+        " 2>/dev/null || echo "0")
+        elif [ "$INPUT_FORMAT" = "json" ]; then
+          # For JSON format, count from stdout would require tee — use exit code as proxy
+          if [ "$EXIT_CODE" -eq 0 ]; then
+            FINDINGS_COUNT=0
+          fi
+        fi
+
+        # Set outputs
+        echo "findings-count=${FINDINGS_COUNT}" >> "$GITHUB_OUTPUT"
+        echo "exit-code=${EXIT_CODE}" >> "$GITHUB_OUTPUT"
+
+        # Propagate the exit code
+        exit "$EXIT_CODE"
+
+    # ── Upload SARIF to GitHub Code Scanning ───────────────────────────────
+    - name: Upload SARIF to GitHub Code Scanning
+      if: inputs.format == 'sarif' && always()
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ runner.temp }}/sicario-results.sarif
+      continue-on-error: true

@@ -1,5 +1,5 @@
 {
-  "total_vulnerabilities": 1203,
+  "total_vulnerabilities": 1385,
   "categories_affected": 6,
   "categories": [
     {
@@ -45,11 +45,11 @@
     {
       "category": "A05_SecurityMisconfiguration",
       "label": "A05:2021 – Security Misconfiguration",
-      "total": 974,
+      "total": 1156,
       "critical": 0,
       "high": 0,
       "medium": 0,
-      "low": 974,
+      "low": 1156,
       "info": 0
     },
     {

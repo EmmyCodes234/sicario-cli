@@ -118,6 +118,49 @@ impl TokenStore {
 
         Ok(())
     }
+
+    // ── Cloud API token methods ───────────────────────────────────────────
+
+    /// Store a cloud API token securely.
+    pub fn store_cloud_token(&self, token: &str) -> Result<()> {
+        #[cfg(test)]
+        if let Some(ref mem) = self.memory {
+            mem.lock()
+                .unwrap()
+                .insert("cloud_api_token".to_string(), token.to_string());
+            return Ok(());
+        }
+        let entry = Entry::new(&self.service_name, "cloud_api_token")?;
+        entry.set_password(token)?;
+        Ok(())
+    }
+
+    /// Retrieve the stored cloud API token.
+    pub fn get_cloud_token(&self) -> Result<String> {
+        #[cfg(test)]
+        if let Some(ref mem) = self.memory {
+            return mem
+                .lock()
+                .unwrap()
+                .get("cloud_api_token")
+                .cloned()
+                .ok_or_else(|| anyhow::anyhow!("No cloud API token in memory store"));
+        }
+        let entry = Entry::new(&self.service_name, "cloud_api_token")?;
+        Ok(entry.get_password()?)
+    }
+
+    /// Remove the stored cloud API token.
+    pub fn clear_cloud_token(&self) -> Result<()> {
+        #[cfg(test)]
+        if let Some(ref mem) = self.memory {
+            mem.lock().unwrap().remove("cloud_api_token");
+            return Ok(());
+        }
+        let entry = Entry::new(&self.service_name, "cloud_api_token")?;
+        let _ = entry.delete_password();
+        Ok(())
+    }
 }
 
 impl Default for TokenStore {

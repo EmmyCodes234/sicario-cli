@@ -92,51 +92,30 @@ fn dispatch(cmd: Command) -> Result<ExitCode> {
             eprintln!("sicario config: not yet implemented");
             Ok(ExitCode::Clean)
         }
-        Command::Suppressions(_args) => {
-            eprintln!("sicario suppressions: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
+        Command::Suppressions(args) => cmd_suppressions(args),
         Command::Completions(args) => {
             cmd_completions(args);
             Ok(ExitCode::Clean)
         }
-        Command::Login => {
-            eprintln!("sicario login: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
-        Command::Logout => {
-            eprintln!("sicario logout: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
-        Command::Publish => {
-            eprintln!("sicario publish: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
-        Command::Whoami => {
-            eprintln!("sicario whoami: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
+        Command::Login => cmd_cloud_login(),
+        Command::Logout => cmd_cloud_logout(),
+        Command::Publish => cmd_cloud_publish(),
+        Command::Whoami => cmd_cloud_whoami(),
         Command::Tui(args) => {
             let scan_dir = PathBuf::from(&args.dir);
             run_interactive_tui(scan_dir)?;
             Ok(ExitCode::Clean)
         }
-        Command::Hook(_args) => {
-            eprintln!("sicario hook: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
+        Command::Hook(args) => cmd_hook(args),
         Command::Lsp(_args) => {
-            eprintln!("sicario lsp: not yet implemented");
+            let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            let rule_paths = crate::lsp::discover_rule_paths(&project_root);
+            let server = crate::lsp::SicarioLspServer::new(project_root, rule_paths);
+            server.run()?;
             Ok(ExitCode::Clean)
         }
-        Command::Benchmark(_args) => {
-            eprintln!("sicario benchmark: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
-        Command::Rules(_args) => {
-            eprintln!("sicario rules: not yet implemented");
-            Ok(ExitCode::Clean)
-        }
+        Command::Benchmark(args) => cmd_benchmark(args),
+        Command::Rules(args) => cmd_rules(args),
         Command::Cache(_args) => {
             eprintln!("sicario cache: not yet implemented");
             Ok(ExitCode::Clean)
@@ -248,6 +227,11 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         }
     }
 
+    // Auto-publish to Sicario Cloud if --publish flag is set
+    if args.publish {
+        publish_scan_results(&vulns, scan_duration, rules_loaded);
+    }
+
     // Compute exit code
     let severity_threshold: Severity = args.severity_threshold.into();
     let summaries: Vec<FindingSummary> = vulns
@@ -266,6 +250,117 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     ))
 }
 
+/// Helper: publish scan results to Sicario Cloud (best-effort, never fails the scan).
+fn publish_scan_results(
+    vulns: &[engine::vulnerability::Vulnerability],
+    scan_duration: std::time::Duration,
+    rules_loaded: usize,
+) {
+    use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
+
+    // Check for cloud auth token — silently skip if not authenticated
+    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+
+    let auth_module = match auth::auth_module::AuthModule::new(client_id, auth_url) {
+        Ok(m) => m,
+        Err(_) => {
+            eprintln!("warning: --publish skipped (could not initialize auth module)");
+            return;
+        }
+    };
+
+    let token = match auth_module.get_cloud_token() {
+        Ok(t) => t,
+        Err(_) => {
+            eprintln!("warning: --publish skipped (not logged in). Run `sicario login` first.");
+            return;
+        }
+    };
+
+    let (repository, branch, commit_sha) = collect_git_metadata();
+
+    let findings: Vec<engine::vulnerability::Finding> = vulns
+        .iter()
+        .map(|v| engine::vulnerability::Finding::from_vulnerability(v, &v.rule_id))
+        .collect();
+
+    let metadata = ScanMetadata {
+        repository,
+        branch,
+        commit_sha,
+        timestamp: chrono::Utc::now(),
+        duration_ms: scan_duration.as_millis() as u64,
+        rules_loaded,
+        files_scanned: 0,
+        language_breakdown: std::collections::HashMap::new(),
+        tags: Vec::new(),
+    };
+
+    let report = ScanReport { findings, metadata };
+    let cloud_url = resolve_cloud_url();
+
+    let client = match PublishClient::new(cloud_url, token) {
+        Ok(c) => c,
+        Err(e) => {
+            eprintln!("warning: --publish skipped ({e})");
+            return;
+        }
+    };
+
+    match client.publish(&report) {
+        Ok(resp) => {
+            eprintln!("Scan published to Sicario Cloud (scan ID: {}).", resp.scan_id);
+            if let Some(url) = resp.dashboard_url {
+                eprintln!("  Dashboard: {url}");
+            }
+        }
+        Err(e) => {
+            eprintln!("warning: --publish failed: {e}");
+        }
+    }
+}
+
+// ─── Suppressions command ──────────────────────────────────────────────────────
+
+fn cmd_suppressions(args: cli::suppressions::SuppressionsCommand) -> Result<ExitCode> {
+    use cli::suppressions::SuppressionsAction;
+    use suppression_learner::SuppressionLearner;
+
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+
+    match args.action {
+        SuppressionsAction::List => {
+            let learner = SuppressionLearner::load(&project_root)?;
+            let patterns = learner.list();
+            if patterns.is_empty() {
+                println!("No learned suppression patterns.");
+            } else {
+                println!(
+                    "{:<30} {:<8} {}",
+                    "Rule ID", "Count", "Example Snippet"
+                );
+                println!("{}", "-".repeat(70));
+                for p in patterns {
+                    let snippet_preview: String =
+                        p.example_snippet.chars().take(40).collect();
+                    println!("{:<30} {:<8} {}", p.rule_id, p.match_count, snippet_preview);
+                }
+            }
+        }
+        SuppressionsAction::Reset => {
+            let mut learner = SuppressionLearner::load(&project_root)?;
+            learner.reset();
+            learner.save()?;
+            println!("All learned suppression patterns have been cleared.");
+        }
+    }
+
+    Ok(ExitCode::Clean)
+}
+
 // ─── Shell completions ────────────────────────────────────────────────────────
 
 fn cmd_completions(args: CompletionsArgs) {
@@ -274,6 +369,159 @@ fn cmd_completions(args: CompletionsArgs) {
 
     let mut cmd = SicarioCli::command();
     generate(args.shell, &mut cmd, "sicario", &mut std::io::stdout());
+}
+
+// ─── Hook command ─────────────────────────────────────────────────────────────
+
+fn cmd_hook(args: cli::hook::HookCommand) -> Result<ExitCode> {
+    use cli::hook::HookAction;
+    use hook::manager::{HookManagement, HookManager};
+
+    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let mgr = HookManager::new(&cwd)?;
+
+    match args.action {
+        HookAction::Install => {
+            mgr.install()?;
+            eprintln!("sicario: pre-commit hook installed");
+        }
+        HookAction::Uninstall => {
+            mgr.uninstall()?;
+            eprintln!("sicario: pre-commit hook uninstalled");
+        }
+        HookAction::Status => {
+            let st = mgr.status()?;
+            if st.installed {
+                eprintln!("sicario: pre-commit hook is installed");
+                if let Some(cmd) = &st.command {
+                    eprintln!("  command: {cmd}");
+                }
+            } else {
+                eprintln!("sicario: pre-commit hook is not installed");
+            }
+        }
+    }
+
+    Ok(ExitCode::Clean)
+}
+
+// ─── Cloud auth commands ──────────────────────────────────────────────────────
+
+fn cmd_cloud_login() -> Result<ExitCode> {
+    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+
+    let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
+    auth_module.cloud_login()?;
+    Ok(ExitCode::Clean)
+}
+
+fn cmd_cloud_logout() -> Result<ExitCode> {
+    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+
+    let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
+    auth_module.cloud_logout()?;
+    eprintln!("Logged out of Sicario Cloud.");
+    Ok(ExitCode::Clean)
+}
+
+fn cmd_cloud_whoami() -> Result<ExitCode> {
+    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+
+    let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
+    match auth_module.cloud_whoami() {
+        Ok(info) => {
+            println!("User:         {}", info.username);
+            println!("Email:        {}", info.email);
+            println!("Organization: {}", info.organization);
+            println!("Plan:         {}", info.plan_tier);
+            Ok(ExitCode::Clean)
+        }
+        Err(e) => {
+            eprintln!("sicario whoami: {e}");
+            Ok(ExitCode::Clean)
+        }
+    }
+}
+
+fn cmd_cloud_publish() -> Result<ExitCode> {
+    use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
+
+    // Check authentication
+    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
+        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
+        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+
+    let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
+    let token = match auth_module.get_cloud_token() {
+        Ok(t) => t,
+        Err(_) => {
+            eprintln!("Not logged in to Sicario Cloud. Run `sicario login` first.");
+            return Ok(ExitCode::Clean);
+        }
+    };
+
+    // Run a scan to get findings
+    let scan_start = std::time::Instant::now();
+    let dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let rule_files = discover_bundled_rules();
+
+    let mut eng = engine::sast_engine::SastEngine::new(&dir)?;
+    let mut rules_loaded = 0usize;
+    for f in &rule_files {
+        if eng.load_rules(f).is_ok() {
+            rules_loaded += 1;
+        }
+    }
+
+    let vulns = eng.scan_directory(&dir)?;
+    let scan_duration = scan_start.elapsed();
+
+    let (repository, branch, commit_sha) = collect_git_metadata();
+
+    let findings: Vec<engine::vulnerability::Finding> = vulns
+        .iter()
+        .map(|v| engine::vulnerability::Finding::from_vulnerability(v, &v.rule_id))
+        .collect();
+
+    let metadata = ScanMetadata {
+        repository,
+        branch,
+        commit_sha,
+        timestamp: chrono::Utc::now(),
+        duration_ms: scan_duration.as_millis() as u64,
+        rules_loaded,
+        files_scanned: 0,
+        language_breakdown: std::collections::HashMap::new(),
+        tags: Vec::new(),
+    };
+
+    let report = ScanReport { findings, metadata };
+    let cloud_url = resolve_cloud_url();
+    let client = PublishClient::new(cloud_url, token)?;
+
+    match client.publish(&report) {
+        Ok(resp) => {
+            eprintln!("Scan published to Sicario Cloud (scan ID: {}).", resp.scan_id);
+            if let Some(url) = resp.dashboard_url {
+                eprintln!("  Dashboard: {url}");
+            }
+        }
+        Err(e) => {
+            eprintln!("sicario publish: {e}");
+        }
+    }
+
+    Ok(ExitCode::Clean)
 }
 
 // ─── Interactive TUI ──────────────────────────────────────────────────────────
@@ -355,6 +603,108 @@ fn discover_bundled_rules() -> Vec<PathBuf> {
         }
     }
     Vec::new()
+}
+
+// ─── Benchmark command ─────────────────────────────────────────────────────────
+
+fn cmd_benchmark(args: cli::benchmark::BenchmarkArgs) -> Result<ExitCode> {
+    use benchmark::BenchmarkRunner;
+
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let rule_files = discover_bundled_rules();
+    let runner = BenchmarkRunner::new(&project_root, rule_files);
+
+    let result = runner.run(&project_root)?;
+
+    // Compare against baseline if requested
+    if let Some(ref baseline_name) = args.compare_baseline {
+        let baseline = if baseline_name == "latest" {
+            runner.load_latest_baseline()?
+        } else {
+            runner.load_baseline(baseline_name)?
+        };
+
+        if let Some(baseline) = baseline {
+            let comparison = BenchmarkRunner::compare(&baseline, &result);
+            if args.format == "json" {
+                println!("{}", serde_json::to_string_pretty(&comparison)?);
+            } else {
+                print!("{}", comparison.display_text());
+            }
+            return Ok(ExitCode::Clean);
+        } else {
+            eprintln!("warning: no baseline found for comparison");
+        }
+    }
+
+    // Output result
+    if args.format == "json" {
+        println!("{}", serde_json::to_string_pretty(&result)?);
+    } else {
+        print!("{}", result.display_text());
+    }
+
+    Ok(ExitCode::Clean)
+}
+
+// ─── Rules command ────────────────────────────────────────────────────────────
+
+fn cmd_rules(args: cli::rules::RulesCommand) -> Result<ExitCode> {
+    use cli::rules::RulesAction;
+    use engine::sast_engine::SastEngine;
+    use rule_harness::{RuleQualityValidation, RuleTestHarness};
+
+    let project_root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    let rule_files = discover_bundled_rules();
+
+    // Load all rules
+    let mut engine = SastEngine::new(&project_root)?;
+    for f in &rule_files {
+        if let Err(e) = engine.load_rules(f) {
+            eprintln!("warning: could not load {:?}: {e}", f);
+        }
+    }
+    let rules = engine.get_rules().to_vec();
+    let harness = RuleTestHarness::new(&project_root);
+
+    match args.action {
+        RulesAction::Test(test_args) => {
+            eprintln!("Running rule test cases for {} rules...", rules.len());
+            let report = harness.validate_all(&rules)?;
+
+            if test_args.report {
+                if report.aggregate_fp_rate >= 0.15 {
+                    eprintln!(
+                        "⚠ Aggregate FP rate {:.1}% exceeds 15% threshold",
+                        report.aggregate_fp_rate * 100.0
+                    );
+                }
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.display_text());
+            }
+
+            if report.invalid_rules > 0 {
+                return Ok(ExitCode::FindingsDetected);
+            }
+        }
+        RulesAction::Validate(validate_args) => {
+            eprintln!("Validating {} rules...", rules.len());
+            let report = harness.validate_all_syntax(&rules);
+
+            if validate_args.report {
+                println!("{}", serde_json::to_string_pretty(&report)?);
+            } else {
+                print!("{}", report.display_text());
+            }
+
+            if report.invalid_rules > 0 {
+                return Ok(ExitCode::FindingsDetected);
+            }
+        }
+    }
+
+    Ok(ExitCode::Clean)
 }
 
 // ─── Report handler (preserved from original) ────────────────────────────────

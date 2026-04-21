@@ -1,2 +1,8 @@
 //! Cloud publish client module — authenticated upload to Sicario Cloud API.
-//! Implementation will be added in a later task.
+
+pub mod client;
+
+pub use client::{
+    collect_git_metadata, resolve_cloud_url, PublishClient, PublishResponse, ScanMetadata,
+    ScanReport,
+};

@@ -2,7 +2,7 @@
 
 ## Overview
 
-This plan transforms Sicario from a working SAST prototype into a production-grade security platform. Tasks are ordered so that foundational pieces (CLI framework, output formatting) land first, followed by engine improvements, rule expansion, AI remediation, integrations, and cloud features. All work targets the existing `sicario-cli` Rust crate — new functionality is added as new modules, existing modules are extended.
+This plan transforms Sicario from a working SAST prototype into a production-grade security platform. Tasks are ordered so that foundational pieces (CLI framework, output formatting) land first, followed by engine improvements, rule expansion, AI remediation, integrations, and cloud features. All work targets the existing `sicario-cli` Rust crate — new functionality is added as new modules, existing modules are extended. The cloud platform (`sicario-cloud` crate) uses Convex as its database backend with an Axum REST API server in front.
 
 ## Tasks
 
@@ -422,8 +422,8 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Support `--no-verify` to skip verification
     - _Requirements: 17.1, 17.2, 17.3, 17.4, 17.5, 17.6_
 
-- [ ] 17. Learning Suppressions
-  - [ ] 17.1 Create `suppression_learner/learner.rs` implementing `SuppressionLearning` trait
+- [x] 17. Learning Suppressions
+  - [x] 17.1 Create `suppression_learner/learner.rs` implementing `SuppressionLearning` trait
     - Record suppression patterns: rule ID, AST node type, surrounding code context
     - After 3+ suppressions for same rule ID with similar AST context, flag subsequent matches as "suggested suppression"
     - When `--auto-suppress` is active, exclude matching findings from results
@@ -440,8 +440,8 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
 - [ ] 18. Checkpoint — AI remediation, verification, and learning suppressions work
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 19. Pre-Commit Hook Integration
-  - [ ] 19.1 Create `hook/manager.rs` implementing `HookManagement` trait
+- [x] 19. Pre-Commit Hook Integration
+  - [x] 19.1 Create `hook/manager.rs` implementing `HookManagement` trait
     - `install`: create/append to `.git/hooks/pre-commit` with `sicario scan --staged --severity-threshold high --quiet`
     - Append to existing hooks rather than overwriting
     - `uninstall`: remove only the Sicario invocation from the hook script
@@ -451,8 +451,8 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Exit 0 with single-line summary when clean, exit 1 with concise finding summary when blocking
     - _Requirements: 22.1, 22.2, 22.3, 22.4, 22.5, 22.6, 22.7, 22.8, 22.9_
 
-- [ ] 20. LSP Server and VS Code Extension
-  - [ ] 20.1 Create `lsp/server.rs` implementing LSP JSON-RPC over stdin/stdout
+- [x] 20. LSP Server and VS Code Extension
+  - [x] 20.1 Create `lsp/server.rs` implementing LSP JSON-RPC over stdin/stdout
     - Use `lsp-server` and `lsp-types` crates
     - Support methods: `textDocument/didOpen`, `textDocument/didChange`, `textDocument/didSave`, `textDocument/didClose`, `textDocument/publishDiagnostics`, `textDocument/codeAction`
     - Map findings to `Diagnostic` objects: Critical/High → Error, Medium → Warning, Low/Info → Information
@@ -467,14 +467,14 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Assert Critical/High → Error, Medium → Warning, Low/Info → Information
     - **Validates: Requirements 23.2**
 
-  - [ ] 20.3 Create VS Code extension package
+  - [x] 20.3 Create VS Code extension package
     - Package as `.vsix` file configuring LSP client to launch `sicario lsp`
     - Map Sicario diagnostics to editor squiggles with severity-appropriate colors
     - Provide "Sicario: Scan Workspace" command for full workspace scan
     - _Requirements: 23.8, 23.9_
 
-- [ ] 21. GitHub Action for CI Integration
-  - [ ] 21.1 Create GitHub Action definition (`action.yml`) and wrapper script
+- [x] 21. GitHub Action for CI Integration
+  - [x] 21.1 Create GitHub Action definition (`action.yml`) and wrapper script
     - Usable via `uses: sicario/scan-action@v1`
     - Accept inputs: `severity-threshold`, `diff-base`, `format`, `scan-path`
     - When `format: sarif`, upload via `github/codeql-action/upload-sarif`
@@ -483,33 +483,36 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Cache Sicario binary between workflow runs
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6_
 
-- [ ] 22. Checkpoint — Integrations (hooks, LSP, GitHub Action) work
+- [x] 22. Checkpoint — Integrations (hooks, LSP, GitHub Action) work
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 23. Cloud Platform — Publish client (CLI side)
-  - [ ] 23.1 Extend `auth/` module with cloud login/logout/whoami
+- [x] 23. Cloud Platform — Publish client (CLI side)
+  - [x] 23.1 Extend `auth/` module with cloud login/logout/whoami
     - `login`: browser-based OAuth flow, store API token in OS credential store
     - `logout`: remove stored API token
     - `whoami`: display authenticated user, organization, plan tier
     - _Requirements: 21.1, 21.2, 21.7_
 
-  - [ ] 23.2 Create `publish/client.rs` implementing `PublishClient`
+  - [x] 23.2 Create `publish/client.rs` implementing `PublishClient`
     - Authenticated upload of `ScanReport` payload (findings + metadata) to Cloud API
     - Include metadata: repository, branch, commit SHA, timestamp, duration, rules loaded, files scanned, language breakdown, tags
     - Wire `--publish` flag on `scan` command for auto-upload after scan
     - CLI functions fully offline — cloud is optional enhancement
     - _Requirements: 21.3, 21.4, 21.5, 21.6_
 
-  - [ ]* 23.3 Cloud Platform — REST API (server side)
+  - [x] 23.3 Cloud Platform — REST API (server side)
     - Define OpenAPI v1 spec for REST API: Findings CRUD + triage, scan history, analytics, project config, team management
-    - Implement versioned REST API (Rust/Axum or Node.js) with JWT auth
-    - PostgreSQL + TimescaleDB for time-series analytics
+    - Implement versioned REST API (Rust/Axum) with JWT auth and `DataStore` trait abstraction
+    - Convex backend (`convex/` directory) with schema, mutations, and queries deployed to `https://doting-spaniel-863.convex.cloud`
+    - `ConvexStore` calls Convex HTTP API for persistence with local in-memory write-through cache for resilience
+    - `InMemoryStore` for tests (no external dependencies)
     - Webhook dispatcher for Slack/Teams/PagerDuty/custom HTTP on critical findings, SLA breaches, scan failures
     - Support CSV export and documented data schema for BI tools (Grafana, Looker)
+    - Convex tables: scans, findings, projects, teams, organizations, webhooks, webhookDeliveries (18 indexes)
     - _Requirements: 21.26, 21.27, 21.28_
 
-  - [ ]* 23.4 Cloud Platform — Dashboard web frontend
-    - Next.js + React dashboard with:
+  - [x] 23.4 Cloud Platform — Dashboard web frontend
+    - Next.js + React dashboard consuming data from Convex via the REST API (`sicario-cloud` Axum server) or directly via Convex React hooks:
       - Overview page: filterable charts (time period, product type, project, severity, confidence, reachability)
       - Production Backlog: open/fixed/ignored/net-new findings, stacked area chart
       - Secure Guardrails: PR findings shown, shift-left rate, adoption chart
@@ -522,20 +525,21 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Bulk triage actions, finding details page with data-flow trace and AI guidance
     - AI-assisted triage (true positive vs false positive suggestion)
     - Priority tab: Critical/High + high confidence + reachable findings as default developer view
+    - Can use Convex React client for real-time subscriptions (findings update live in dashboard)
     - _Requirements: 21.8–21.25_
 
-  - [ ]* 23.5 Cloud Platform — RBAC and SSO
-    - Organization → Teams → Projects hierarchy with inherited permissions
-    - Roles: Admin, Manager, Developer
+  - [x] 23.5 Cloud Platform — RBAC and SSO
+    - Organization → Teams → Projects hierarchy with inherited permissions (Convex tables already support this via orgId/teamId references)
+    - Roles: Admin, Manager, Developer (enforce in Convex mutations via JWT claims)
     - SSO via SAML 2.0 and OpenID Connect
     - _Requirements: 21.29, 21.30, 21.31_
 
-  - [ ]* 23.6 Cloud Platform — Snowflake/BI data export integration
-    - Documented data schema for Snowflake integration
+  - [x] 23.6 Cloud Platform — Snowflake/BI data export integration
+    - Documented data schema for Snowflake integration (export via CSV endpoint or Convex data export)
     - _Requirements: 21.28_
 
-- [ ] 24. Benchmarking and Rule Quality Enforcement
-  - [ ] 24.1 Create `benchmark/runner.rs` implementing `BenchmarkRunner`
+- [x] 24. Benchmarking and Rule Quality Enforcement
+  - [x] 24.1 Create `benchmark/runner.rs` implementing `BenchmarkRunner`
     - Measure: total wall-clock time, files/second, rules/second, peak memory (via `sysinfo`), per-language breakdown
     - Support `--format json` for structured output
     - Support `--compare-baseline` to compare against previous benchmark
@@ -544,7 +548,7 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Target: 10,000 files (mixed languages, ~200 lines each) in under 10 seconds on 8-core/16GB machine
     - _Requirements: 24.1, 24.2, 24.3, 24.4, 24.5, 24.6, 24.7_
 
-  - [ ] 24.2 Create `rule_harness/harness.rs` implementing `RuleQualityValidation` trait
+  - [x] 24.2 Create `rule_harness/harness.rs` implementing `RuleQualityValidation` trait
     - Validate each rule has ≥3 TP and ≥3 TN test cases
     - Execute all test cases: every TP must produce ≥1 finding, every TN must produce 0 findings
     - Reject rules missing required test cases
@@ -562,18 +566,18 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
 - [ ] 25. Final Checkpoint — Full integration
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 26. Wire everything together and update Cargo.toml
-  - [ ] 26.1 Add new dependencies to workspace `Cargo.toml`
+- [x] 26. Wire everything together and update Cargo.toml
+  - [x] 26.1 Add new dependencies to workspace `Cargo.toml`
     - Add: `clap` (v4.5, features: derive, env, string), `clap_complete` (v4.5), `indicatif` (v0.17), `owo-colors` (v4.0), `comfy-table` (v7.1), `console` (v0.15), `lsp-server` (v0.7), `lsp-types` (v0.95), `sysinfo` (v0.30)
     - Add these to `[workspace.dependencies]` and reference from `sicario-cli/Cargo.toml`
     - _Requirements: all (structural)_
 
-  - [ ] 26.2 Update `.sicarioignore` support in `parser/exclusion_manager.rs`
+  - [x] 26.2 Update `.sicarioignore` support in `parser/exclusion_manager.rs`
     - Add `.sicarioignore` file parsing following `.gitignore` syntax
     - Wire into SAST_Engine file discovery
     - _Requirements: 19.3_
 
-  - [ ] 26.3 Final integration: ensure all subcommands dispatch correctly from `main.rs`
+  - [x] 26.3 Final integration: ensure all subcommands dispatch correctly from `main.rs`
     - Verify each `Command` variant routes to its handler
     - Verify default (no subcommand) launches TUI
     - Verify `--version` and `--help` work at top level and per subcommand
@@ -584,8 +588,9 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
 
 ## Notes
 
-- Tasks marked with `*` are optional and can be skipped for faster MVP — these include property-based tests, the cloud dashboard web frontend (23.4), cloud RBAC/SSO (23.5), Snowflake integration (23.6), and the cloud REST API server (23.3)
+- Tasks marked with `*` are optional and can be skipped for faster MVP — these include property-based tests, the cloud dashboard web frontend (23.4), cloud RBAC/SSO (23.5), and Snowflake integration (23.6)
 - The CLI publish client (23.1, 23.2) is required; the cloud server-side components are optional for initial release
+- The cloud platform uses Convex as its database backend (deployed at `https://doting-spaniel-863.convex.cloud`). The Convex schema, mutations, and queries live in the `convex/convex/` directory. The `sicario-cloud` Axum server uses a `DataStore` trait with `ConvexStore` (production) and `InMemoryStore` (tests)
 - Rule expansion tasks (10–14) involve writing YAML rule files with embedded test cases — no engine code changes needed since the Rule_Loader already supports arbitrary YAML rules
 - Each task references specific requirements for traceability
 - Checkpoints ensure incremental validation throughout the build

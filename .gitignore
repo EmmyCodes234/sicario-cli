@@ -26,6 +26,9 @@ ehthumbs.db
 .env.*
 !.env.example
 
+# Node
+node_modules/
+
 # Coverage
 lcov.info
 tarpaulin-report.html
