@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Discussions
+    url: https://github.com/EmmyCodes234/sicario-cli/discussions
+    about: Ask questions, share ideas, or discuss Sicario CLI
+  - name: 📖 Documentation
+    url: https://github.com/EmmyCodes234/sicario-cli#readme
+    about: Read the documentation before opening an issue

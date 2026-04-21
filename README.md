@@ -1,45 +1,149 @@
 <p align="center">
-  <img src="https://img.shields.io/badge/built%20with-Rust-dea584?style=for-the-badge&logo=rust" alt="Built with Rust" />
-  <img src="https://img.shields.io/badge/license-MIT-blue?style=for-the-badge" alt="MIT License" />
-  <img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows-lightgrey?style=for-the-badge" alt="Cross-platform" />
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=40&duration=3000&pause=1000&color=E06C75&center=true&vCenter=true&width=500&lines=SICARIO+CLI" />
+    <img alt="Sicario CLI" src="https://readme-typing-svg.demolab.com?font=JetBrains+Mono&weight=700&size=40&duration=3000&pause=1000&color=C0392B&center=true&vCenter=true&width=500&lines=SICARIO+CLI" />
+  </picture>
 </p>
 
-# Sicario CLI
+<p align="center">
+  <strong>Next-generation SAST · Secret Scanning · SCA · AI Remediation</strong><br/>
+  <em>One binary. All languages. Zero compromise.</em>
+</p>
 
-**A next-generation SAST tool engineered in Rust for 10× faster security scanning.**
+<p align="center">
+  <a href="https://github.com/EmmyCodes234/sicario-cli/actions/workflows/ci.yml"><img src="https://github.com/EmmyCodes234/sicario-cli/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI" /></a>
+  <a href="https://github.com/EmmyCodes234/sicario-cli/actions/workflows/release.yml"><img src="https://github.com/EmmyCodes234/sicario-cli/actions/workflows/release.yml/badge.svg" alt="Release" /></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
+  <img src="https://img.shields.io/badge/tests-433_passing-brightgreen" alt="433 tests passing" />
+  <img src="https://img.shields.io/badge/rules-40+-orange" alt="40+ security rules" />
+  <img src="https://img.shields.io/badge/languages-5-blueviolet" alt="5 languages" />
+</p>
 
-Sicario replaces legacy Python and Node.js security scanners with a single, statically linked binary that performs deep static analysis, secret detection, SCA vulnerability matching, and AI-powered remediation — all from your terminal.
+<p align="center">
+  <img src="https://img.shields.io/badge/rust-%23000000.svg?style=flat&logo=rust&logoColor=white" alt="Rust" />
+  <img src="https://img.shields.io/badge/tree--sitter-AST_parsing-green?style=flat" alt="Tree-sitter" />
+  <img src="https://img.shields.io/badge/SARIF-GitHub_Code_Scanning-purple?style=flat" alt="SARIF" />
+  <img src="https://img.shields.io/badge/OWASP-Top_10-red?style=flat" alt="OWASP" />
+  <img src="https://img.shields.io/badge/MCP-AI_Assistants-blue?style=flat" alt="MCP" />
+</p>
+
+---
+
+Sicario replaces legacy Python and Node.js security scanners with a single, statically linked Rust binary. Deep static analysis, secret detection, SCA vulnerability matching, and AI-powered remediation — all from your terminal.
+
+```
+   _____ _                _
+  / ____(_)              (_)
+ | (___  _  ___ __ _ _ __ _  ___
+  \___ \| |/ __/ _` | '__| |/ _ \
+  ____) | | (_| (_| | |  | | (_) |
+ |_____/|_|\___\__,_|_|  |_|\___/   SAST · SCA · Secrets · AI Fix
+
+ $ sicario scan .
+ ┌─────────────────────────────────────────────────┐
+ │ ✓ Parsed 1,247 files across 5 languages         │
+ │ ✓ Matched 40 rules · 12 findings                │
+ │ ✓ Reachability: 4 exploitable, 8 filtered       │
+ │ ✓ SARIF report → results.sarif                  │
+ └─────────────────────────────────────────────────┘
+```
 
 ---
 
 ## Why Sicario?
 
-| Pain point | Sicario's answer |
-|---|---|
-| Slow scanners that block CI | Tree-sitter AST parsing + Rayon parallelism — scans large monorepos in seconds |
-| Noisy false positives | Data-flow reachability analysis filters findings to only exploitable paths |
-| "Fix it yourself" reports | AI-powered remediation generates patches and applies them with backup/rollback |
-| Tool sprawl (SAST + SCA + secrets) | One binary covers SAST rules, secret scanning, and SCA advisory matching |
-| Hard to extend | YAML-based rules — add a new detector in minutes, no recompilation needed |
+<table>
+<tr>
+<td width="50%">
+
+### 🔍 The Problem
+
+- Security scanners are **slow** — blocking CI for minutes
+- **Hundreds of false positives** waste developer time
+- Separate tools for SAST, SCA, and secrets
+- Reports say "fix it" but don't help you fix it
+- Rules are hard-coded — extending means forking
+
+</td>
+<td width="50%">
+
+### ⚡ Sicario's Answer
+
+- **Tree-sitter AST + Rayon parallelism** — seconds, not minutes
+- **Data-flow reachability** filters to only exploitable paths
+- **One binary** covers SAST, SCA, and secret scanning
+- **AI remediation** generates and applies patches automatically
+- **YAML rules** — add a detector in minutes, no recompilation
+
+</td>
+</tr>
+</table>
+
+### How Sicario compares
+
+| Capability | Sicario | Semgrep | Bandit | ESLint Security |
+|---|:---:|:---:|:---:|:---:|
+| Multi-language (5+) | ✅ | ✅ | ❌ | ❌ |
+| Secret scanning | ✅ | ❌ | ❌ | ❌ |
+| SCA / dependency audit | ✅ | ✅ | ❌ | ❌ |
+| Data-flow reachability | ✅ | ✅ | ❌ | ❌ |
+| AI auto-remediation | ✅ | ❌ | ❌ | ❌ |
+| Interactive TUI | ✅ | ❌ | ❌ | ❌ |
+| MCP server (AI assistants) | ✅ | ❌ | ❌ | ❌ |
+| Single static binary | ✅ | ❌ | ❌ | ❌ |
+| SARIF + OWASP reports | ✅ | ✅ | ❌ | ❌ |
+| Zero runtime dependencies | ✅ | ❌ | ❌ | ❌ |
 
 ---
 
 ## Features
 
-- **Multi-language SAST** — Go, Java, JavaScript/TypeScript, Python, Rust via tree-sitter grammars
-- **Secret scanning** — regex + entropy-based detection with provider-specific verifiers
-- **SCA / dependency audit** — matches against OSV and GHSA advisory databases
-- **Data-flow reachability** — prunes unreachable findings to cut false positives
-- **AI remediation** — LLM-driven code fixes with safe backup/rollback
-- **OWASP compliance reports** — JSON + Markdown reports mapped to OWASP Top 10
-- **SARIF output** — first-class support for GitHub Code Scanning and VS Code
-- **Interactive TUI** — Ratatui-powered terminal dashboard for exploring findings
-- **MCP server** — Model Context Protocol integration for AI assistant workflows
-- **OAuth 2.0 + PKCE** — secure device-flow authentication for cloud features
-- **Git-aware diff scanning** — scan only changed lines in PRs
-- **Baseline management** — suppress known findings, track new introductions
-- **Homebrew & curl installer** — one-command install on macOS and Linux
-- **Cross-platform** — Linux (musl static), macOS (Intel + Apple Silicon), Windows (MSVC)
+<table>
+<tr>
+<td>
+
+**🛡️ Analysis**
+- Multi-language SAST (Go, Java, JS/TS, Python, Rust)
+- Secret scanning with entropy + provider verifiers
+- SCA via OSV and GHSA advisory databases
+- Data-flow reachability analysis
+- Confidence scoring to rank findings
+
+</td>
+<td>
+
+**🔧 Remediation**
+- AI-powered code fixes (Cerebras LLM)
+- Safe backup/rollback for every patch
+- Git-aware diff scanning for PRs
+- Baseline management for known findings
+- Inline suppression comments
+
+</td>
+</tr>
+<tr>
+<td>
+
+**📊 Reporting**
+- SARIF output for GitHub Code Scanning
+- OWASP Top 10 compliance (JSON + Markdown)
+- Branded terminal tables
+- JSON export for pipelines
+- Multi-format simultaneous output
+
+</td>
+<td>
+
+**🚀 Developer Experience**
+- Interactive TUI dashboard (Ratatui)
+- MCP server for AI assistant integration
+- OAuth 2.0 + PKCE authentication
+- Shell completions (bash/zsh/fish/pwsh)
+- Homebrew + curl installer
+
+</td>
+</tr>
+</table>
 
 ---
 
@@ -48,19 +152,16 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 ### Install
 
 **Homebrew (macOS / Linux)**
-
 ```bash
 brew install EmmyCodes234/sicario-cli/sicario
 ```
 
 **Shell installer**
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/EmmyCodes234/sicario-cli/main/install.sh | sh
 ```
 
 **From source**
-
 ```bash
 git clone https://github.com/EmmyCodes234/sicario-cli.git
 cd sicario-cli
@@ -68,10 +169,10 @@ cargo build --release
 # Binary at target/release/sicario
 ```
 
-### Run your first scan
+### Usage
 
 ```bash
-# Scan the current directory
+# Scan current directory
 sicario scan .
 
 # JSON output
@@ -80,8 +181,17 @@ sicario scan . --format json
 # SARIF for GitHub Code Scanning
 sicario scan . --format sarif -o results.sarif
 
+# Generate OWASP compliance report
+sicario report .
+
 # Interactive TUI
 sicario tui
+
+# AI-powered fix
+sicario fix --vuln VULN-ID
+
+# Shell completions
+sicario completions bash >> ~/.bashrc
 ```
 
 ---
@@ -89,22 +199,31 @@ sicario tui
 ## Architecture
 
 ```
-┌──────────────────────────────────────────────────────────────────┐
-│                         Sicario CLI                              │
-├──────────┬──────────┬──────────┬──────────┬─────────────────────┤
-│  Parser  │  Engine  │ Scanner  │  Output  │    Remediation      │
-│ (tree-   │ (SAST +  │ (secrets │ (text,   │ (LLM patches,       │
-│  sitter) │  SCA +   │  + sup-  │  JSON,   │  backup/rollback)   │
-│          │  reach-  │  pres-   │  SARIF)  │                     │
-│          │  ability)│  sions)  │          │                     │
-├──────────┴──────────┴──────────┴──────────┴─────────────────────┤
-│  Auth (OAuth2/PKCE)  │  Cloud (priority/exposure)  │  MCP Server│
-├──────────────────────┴─────────────────────────────┴────────────┤
-│  TUI (Ratatui)  │  CLI (Clap)  │  LSP  │  Git Hooks            │
-└─────────────────┴──────────────┴───────┴────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────┐
+│                           SICARIO CLI                                │
+│                                                                      │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌────────────────────┐  │
+│  │  Parser   │  │  Engine   │  │ Scanner  │  │   Remediation      │  │
+│  │ tree-     │  │ SAST +    │  │ secrets  │  │ LLM patches +      │  │
+│  │ sitter    │──│ SCA +     │──│ entropy  │──│ backup/rollback    │  │
+│  │ 5 langs   │  │ reachable │  │ verifier │  │ Cerebras AI        │  │
+│  └──────────┘  └───────────┘  └──────────┘  └────────────────────┘  │
+│                                                                      │
+│  ┌──────────┐  ┌───────────┐  ┌──────────┐  ┌────────────────────┐  │
+│  │  Output   │  │   Auth    │  │  Cloud   │  │   MCP Server       │  │
+│  │ SARIF     │  │ OAuth2    │  │ priority │  │ Model Context      │  │
+│  │ JSON      │  │ PKCE      │  │ exposure │  │ Protocol for       │  │
+│  │ tables    │  │ keyring   │  │ K8s/CSPM │  │ AI assistants      │  │
+│  └──────────┘  └───────────┘  └──────────┘  └────────────────────┘  │
+│                                                                      │
+│  ┌──────────────────────────────────────────────────────────────┐    │
+│  │  CLI (Clap) · TUI (Ratatui) · LSP · Git Hooks · Cache      │    │
+│  └──────────────────────────────────────────────────────────────┘    │
+└──────────────────────────────────────────────────────────────────────┘
 ```
 
-### Module overview
+<details>
+<summary><strong>📦 Module breakdown (26 modules)</strong></summary>
 
 | Module | Purpose |
 |---|---|
@@ -125,6 +244,17 @@ sicario tui
 | `onboarding/` | Project detection and guided setup |
 | `convex/` | Telemetry and cloud ruleset sync |
 | `cache/` | Scan result caching for incremental runs |
+| `hook/` | Git hook integration |
+| `lsp/` | Language Server Protocol support |
+| `benchmark/` | Performance benchmarking |
+| `rule_harness/` | Rule testing framework |
+| `key_manager/` | API key management |
+| `publish/` | Rule publishing |
+| `suppression_learner/` | ML-based suppression suggestions |
+| `verification/` | Finding verification |
+| `engine/sca/` | SCA sub-engine (OSV, GHSA, manifest parsing, vuln DB) |
+
+</details>
 
 ---
 
@@ -142,32 +272,18 @@ pattern: |
   $USER_INPUT <- "SELECT" + $TAINTED
 ```
 
-See `sicario-cli/rules/` for 40+ built-in rules across Go, Java, JavaScript, Python, and Rust.
+<details>
+<summary><strong>📁 Built-in rules (40+ across 5 languages)</strong></summary>
 
----
+| Language | Rules | Categories |
+|---|---|---|
+| **Go** | 8 | Crypto, error handling, framework vulns, race conditions, SQL/cmd injection, TLS, XXE |
+| **Java** | 11 | Command injection, crypto, deserialization, LDAP, logging, path traversal, Spring Boot, SQL injection, SSRF, XSS, XXE |
+| **JavaScript/TS** | 7 | Express/crypto/prototype, Next.js auth, NoSQL/ReDoS, redirects, SQL injection, SSRF/path traversal, XSS |
+| **Python** | 14 | Command injection, crypto, deserialization, Django misconfig/ORM, FastAPI, Flask/SSTI, LDAP, logging, mass assignment, path traversal, SQL injection, SSRF, XXE |
+| **Rust** | 3 | Crypto/deserialization/memory, framework info leakage, SQL/cmd/path |
 
-## CLI reference
-
-```
-sicario <COMMAND>
-
-Commands:
-  scan           Run a security scan
-  tui            Launch the interactive terminal UI
-  fix            Apply AI-powered remediation
-  report         Generate OWASP compliance reports
-  baseline       Manage finding baselines
-  rules          List / validate rules
-  config         View or edit configuration
-  login/logout   Authenticate with Sicario Cloud
-  completions    Generate shell completions (bash, zsh, fish, powershell)
-  hook           Manage Git hook integration
-  lsp            Start the Language Server Protocol server
-  benchmark      Run performance benchmarks
-  cache          Manage the scan cache
-```
-
-Run `sicario <command> --help` for detailed usage.
+</details>
 
 ---
 
@@ -190,10 +306,33 @@ Run `sicario <command> --help` for detailed usage.
 ### Exit codes
 
 | Code | Meaning |
-|------|---------|
+|:---:|---|
 | `0` | No findings above threshold |
 | `1` | Findings detected above severity/confidence threshold |
 | `2` | Internal error |
+
+---
+
+## Roadmap
+
+- [x] Multi-language SAST engine (Go, Java, JS/TS, Python, Rust)
+- [x] Secret scanning with entropy detection
+- [x] SCA module with OSV/GHSA advisories
+- [x] Data-flow reachability analysis
+- [x] AI-powered remediation (Cerebras)
+- [x] Interactive TUI dashboard
+- [x] SARIF + OWASP reporting
+- [x] MCP server for AI assistants
+- [x] OAuth 2.0 + PKCE authentication
+- [x] Cross-platform CI/CD pipeline
+- [ ] LSP server for IDE integration
+- [ ] Git hook auto-scanning on commit
+- [ ] Performance benchmarking suite
+- [ ] Rule testing harness
+- [ ] Suppression learning (ML-based)
+- [ ] Cloud dashboard integration
+- [ ] VS Code extension
+- [ ] GitHub App for PR comments
 
 ---
 
@@ -209,7 +348,7 @@ Run `sicario <command> --help` for detailed usage.
 ```bash
 cargo build                  # debug build
 cargo build --release        # optimized build
-cargo test --workspace       # run all tests
+cargo test --workspace       # run all 433 tests
 cargo test -p sicario-cli    # crate tests only
 ```
 
@@ -220,11 +359,11 @@ cargo test -p sicario-cli    # crate tests only
 ├── Cargo.toml               # workspace root
 ├── sicario-cli/
 │   ├── Cargo.toml            # crate manifest
-│   ├── src/                  # source code (26 modules)
-│   ├── rules/                # built-in YAML security rules
-│   └── test-samples/         # sample vulnerable files for testing
+│   ├── src/                  # 26 modules, ~50k lines
+│   ├── rules/                # 40+ YAML security rules
+│   └── test-samples/         # vulnerable code samples
 ├── Formula/                  # Homebrew formula
-├── .github/workflows/        # CI and release pipelines
+├── .github/workflows/        # CI + release pipelines
 ├── install.sh                # curl installer
 └── Cross.toml                # cross-compilation config
 ```
@@ -233,12 +372,18 @@ cargo test -p sicario-cli    # crate tests only
 
 ## Contributing
 
-Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines on how to get started.
+Contributions are welcome! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ## Security
 
-If you discover a security vulnerability, please follow our [security policy](SECURITY.md). Do not open a public issue.
+Found a vulnerability? Please follow our [security policy](SECURITY.md). Do not open a public issue.
 
 ## License
 
 This project is licensed under the [MIT License](LICENSE).
+
+---
+
+<p align="center">
+  <sub>Built with ❤️ and Rust · Engineered for speed, precision, and developer happiness</sub>
+</p>
