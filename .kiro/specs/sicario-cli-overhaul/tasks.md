@@ -373,14 +373,14 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
   - Ensure all tests pass, ask the user if questions arise.
 
 - [ ] 16. AI Remediation Improvements — Multi-provider LLM client, template fixes, verification
-  - [ ] 16.1 Rename `remediation/cerebras_client.rs` → `remediation/llm_client.rs` and generalize to OpenAI-compatible API
+  - [x] 16.1 Rename `remediation/cerebras_client.rs` → `remediation/llm_client.rs` and generalize to OpenAI-compatible API
     - Make endpoint configurable via `SICARIO_LLM_ENDPOINT` env var
     - Model configurable via `SICARIO_LLM_MODEL` env var, default `llama3.1-8b`
     - Use non-blocking async HTTP via `reqwest` with 30s timeout
     - Integrate with tokio runtime without creating nested runtimes
     - _Requirements: 11.1, 11.2, 11.3, 11.4_
 
-  - [ ] 16.2 Create `key_manager/manager.rs` implementing key resolution precedence
+  - [x] 16.2 Create `key_manager/manager.rs` implementing key resolution precedence
     - Resolution order: `SICARIO_LLM_API_KEY` env → OS keyring (via `keyring` crate) → `CEREBRAS_API_KEY` env
     - Implement `config set-key`: masked input prompt, store in OS credential store
     - Implement `config set-provider`: store endpoint URL and model in `.sicario/config.yaml`

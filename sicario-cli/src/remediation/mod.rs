@@ -1,16 +1,19 @@
 //! Code remediation module
 //!
 //! Generates and applies security patches using AI and AST manipulation.
+//! The LLM client is provider-agnostic — any OpenAI-compatible endpoint works.
 //!
-//! Requirements: 9.1, 9.2, 9.3, 9.4, 13.1–13.5, 14.1–14.5
+//! Requirements: 9.1, 9.2, 9.3, 9.4, 11.1–11.10
 
 pub mod backup_manager;
-pub mod cerebras_client;
+pub mod cerebras_client; // backward compat — delegates to llm_client
+pub mod llm_client;
 pub mod patch;
 pub mod remediation_engine;
 pub mod remediation_property_tests;
 
 pub use backup_manager::BackupManager;
+pub use llm_client::LlmClient;
 pub use patch::Patch;
 pub use remediation_engine::RemediationEngine;
 
@@ -38,7 +41,6 @@ mod tests {
 
     #[test]
     fn test_module_structure() {
-        // Verify public API is accessible
         let _ctx = FixContext {
             vulnerability_description: "test".to_string(),
             code_snippet: "code".to_string(),

@@ -11,7 +11,7 @@ use std::fs;
 use std::path::Path;
 
 use super::backup_manager::{BackupManager, PatchHistoryEntry};
-use super::cerebras_client::CerebrasClient;
+use super::llm_client::LlmClient;
 use super::{FixContext, Patch};
 use crate::engine::Vulnerability;
 use crate::parser::TreeSitterEngine;
@@ -21,7 +21,7 @@ use crate::parser::TreeSitterEngine;
 /// Orchestrates patch generation and application for detected vulnerabilities.
 pub struct RemediationEngine {
     tree_sitter: TreeSitterEngine,
-    ai_client: CerebrasClient,
+    ai_client: LlmClient,
     backup_manager: BackupManager,
 }
 
@@ -30,7 +30,7 @@ impl RemediationEngine {
     pub fn new(project_root: &Path) -> Result<Self> {
         Ok(Self {
             tree_sitter: TreeSitterEngine::new(project_root)?,
-            ai_client: CerebrasClient::new()?,
+            ai_client: LlmClient::new()?,
             backup_manager: BackupManager::new(project_root)?,
         })
     }
