@@ -14,7 +14,7 @@
   <img src="https://img.shields.io/badge/build-passing-brightgreen" alt="Build passing" />
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="MIT License" /></a>
   <img src="https://img.shields.io/badge/tests-433_passing-brightgreen" alt="433 tests passing" />
-  <img src="https://img.shields.io/badge/rules-40+-orange" alt="40+ security rules" />
+  <img src="https://img.shields.io/badge/rules-500+-orange" alt="500+ security rules" />
   <img src="https://img.shields.io/badge/languages-5-blueviolet" alt="5 languages" />
 </p>
 
@@ -28,7 +28,7 @@
 
 ---
 
-Sicario replaces legacy Python and Node.js security scanners with a single, statically linked Rust binary. Deep static analysis, secret detection, SCA vulnerability matching, and AI-powered remediation — all from your terminal.
+Sicario replaces legacy Python and Node.js security scanners with a single, statically linked Rust binary. Deep static analysis with 500+ rules across 5 languages, secret detection, SCA vulnerability matching, AI-powered remediation, and a cloud dashboard — all from your terminal.
 
 ```
    _____ _                _
@@ -41,7 +41,7 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
  $ sicario scan .
  ┌─────────────────────────────────────────────────┐
  │ ✓ Parsed 1,247 files across 5 languages         │
- │ ✓ Matched 40 rules · 12 findings                │
+ │ ✓ Matched 500+ rules · 12 findings               │
  │ ✓ Reachability: 4 exploitable, 8 filtered       │
  │ ✓ SARIF report → results.sarif                  │
  └─────────────────────────────────────────────────┘
@@ -102,21 +102,25 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 <td>
 
 **🛡️ Analysis**
-- Multi-language SAST (Go, Java, JS/TS, Python, Rust)
+- Multi-language SAST with 500+ rules (Go, Java, JS/TS, Python, Rust)
 - Secret scanning with entropy + provider verifiers
 - SCA via OSV and GHSA advisory databases
 - Data-flow reachability analysis
-- Confidence scoring to rank findings
+- Per-finding confidence scoring
+- Incremental cached scanning
 
 </td>
 <td>
 
 **🔧 Remediation**
-- AI-powered code fixes (Cerebras LLM)
+- Multi-provider AI code fixes (any OpenAI-compatible LLM)
+- Template-based fallback fixes (SQLi, XSS, CmdInj)
 - Safe backup/rollback for every patch
+- Post-fix verification scanning
 - Git-aware diff scanning for PRs
 - Baseline management for known findings
 - Inline suppression comments
+- Learning suppressions (auto-suggest)
 
 </td>
 </tr>
@@ -135,10 +139,15 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 
 **🚀 Developer Experience**
 - Interactive TUI dashboard (Ratatui)
+- VS Code extension via Language Server Protocol
 - MCP server for AI assistant integration
+- Git pre-commit hook integration
+- Performance benchmarking suite
+- Rule quality test harness
 - OAuth 2.0 + PKCE authentication
 - Shell completions (bash/zsh/fish/pwsh)
 - Homebrew + curl installer
+- Sicario Cloud dashboard with team collaboration
 
 </td>
 </tr>
@@ -178,7 +187,16 @@ sicario scan .
 sicario scan . --format json
 
 # SARIF for GitHub Code Scanning
-sicario scan . --format sarif -o results.sarif
+sicario scan . --format sarif --sarif-output results.sarif
+
+# Diff-aware scan (only new findings vs main branch)
+sicario scan . --diff main
+
+# Scan staged files only (pre-commit)
+sicario scan . --staged
+
+# Filter by severity and confidence
+sicario scan . --severity-threshold high --confidence-threshold 0.8
 
 # Generate OWASP compliance report
 sicario report .
@@ -187,7 +205,32 @@ sicario report .
 sicario tui
 
 # AI-powered fix
-sicario fix --vuln VULN-ID
+sicario fix path/to/file.js --rule SQL-001
+
+# Manage baselines
+sicario baseline save --tag v1.0
+sicario baseline compare v1.0
+
+# Git pre-commit hook
+sicario hook install
+sicario hook status
+
+# Performance benchmark
+sicario benchmark
+
+# Validate rules
+sicario rules test
+sicario rules validate
+
+# Configure LLM provider
+sicario config set-key
+sicario config set-provider
+sicario config show
+
+# Cloud integration
+sicario login
+sicario publish
+sicario whoami
 
 # Shell completions
 sicario completions bash >> ~/.bashrc
@@ -272,15 +315,15 @@ pattern: |
 ```
 
 <details>
-<summary><strong>📁 Built-in rules (40+ across 5 languages)</strong></summary>
+<summary><strong>📁 Built-in rules (500+ across 5 languages)</strong></summary>
 
 | Language | Rules | Categories |
 |---|---|---|
-| **Go** | 8 | Crypto, error handling, framework vulns, race conditions, SQL/cmd injection, TLS, XXE |
-| **Java** | 11 | Command injection, crypto, deserialization, LDAP, logging, path traversal, Spring Boot, SQL injection, SSRF, XSS, XXE |
-| **JavaScript/TS** | 7 | Express/crypto/prototype, Next.js auth, NoSQL/ReDoS, redirects, SQL injection, SSRF/path traversal, XSS |
-| **Python** | 14 | Command injection, crypto, deserialization, Django misconfig/ORM, FastAPI, Flask/SSTI, LDAP, logging, mass assignment, path traversal, SQL injection, SSRF, XXE |
-| **Rust** | 3 | Crypto/deserialization/memory, framework info leakage, SQL/cmd/path |
+| **Go** | 100+ | SQL injection, command injection, path traversal, SSRF, crypto, error handling, Gin/Echo/Fiber framework, race conditions, TLS, info leakage, XXE |
+| **Java** | 100+ | SQL injection, XSS, command injection, deserialization, path traversal, crypto, Spring Boot, SSRF, XXE, LDAP injection, logging |
+| **JavaScript/TS** | 100+ | SQL injection, XSS, SSRF, path traversal, deserialization, Express.js, crypto, prototype pollution, Next.js, auth/JWT, NoSQL injection, ReDoS, open redirect, TypeScript type safety |
+| **Python** | 100+ | Django ORM/misconfig, Flask/SSTI, SQL injection, path traversal, deserialization, command injection, crypto, FastAPI, LDAP, XXE, mass assignment, logging |
+| **Rust** | 100+ | SQL injection, command injection, path traversal, crypto, deserialization, memory safety, concurrency, Actix-web/Axum framework, info leakage |
 
 </details>
 
@@ -288,13 +331,27 @@ pattern: |
 
 ## CI / CD integration
 
-### GitHub Actions
+### GitHub Actions (using the Sicario Action)
+
+```yaml
+- name: Run Sicario SAST
+  uses: EmmyCodes234/sicario-cli@main
+  with:
+    args: scan . --format sarif --sarif-output results.sarif
+
+- name: Upload SARIF
+  uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: results.sarif
+```
+
+### GitHub Actions (manual install)
 
 ```yaml
 - name: Run Sicario SAST
   run: |
     curl -fsSL https://raw.githubusercontent.com/EmmyCodes234/sicario-cli/main/install.sh | sh
-    sicario scan . --format sarif -o results.sarif
+    sicario scan . --format sarif --sarif-output results.sarif
 
 - name: Upload SARIF
   uses: github/codeql-action/upload-sarif@v3
@@ -315,23 +372,33 @@ pattern: |
 ## Roadmap
 
 - [x] Multi-language SAST engine (Go, Java, JS/TS, Python, Rust)
+- [x] 500+ security rules across 5 languages
 - [x] Secret scanning with entropy detection
 - [x] SCA module with OSV/GHSA advisories
 - [x] Data-flow reachability analysis
-- [x] AI-powered remediation (Cerebras)
+- [x] Multi-provider AI remediation (any OpenAI-compatible LLM)
+- [x] Template-based fallback fixes (SQLi, XSS, CmdInj)
 - [x] Interactive TUI dashboard
 - [x] SARIF + OWASP reporting
 - [x] MCP server for AI assistants
 - [x] OAuth 2.0 + PKCE authentication
 - [x] Cross-platform CI/CD pipeline
-- [ ] LSP server for IDE integration
-- [ ] Git hook auto-scanning on commit
-- [ ] Performance benchmarking suite
-- [ ] Rule testing harness
-- [ ] Suppression learning (ML-based)
-- [ ] Cloud dashboard integration
-- [ ] VS Code extension
+- [x] LSP server for IDE integration
+- [x] VS Code extension
+- [x] Git pre-commit hook integration
+- [x] Performance benchmarking suite
+- [x] Rule testing harness with TP/TN validation
+- [x] Suppression learning (auto-suggest)
+- [x] Post-fix verification scanning
+- [x] Per-finding confidence scoring
+- [x] Baseline tracking with delta comparison
+- [x] Incremental cached scanning
+- [x] BYOK key management (OS keyring)
+- [x] Sicario Cloud platform (Convex backend + Next.js dashboard)
+- [x] Cloud publish command
+- [x] GitHub Action for CI integration
 - [ ] GitHub App for PR comments
+- [ ] Slack/Teams webhook notifications
 
 ---
 
@@ -359,10 +426,18 @@ cargo test -p sicario-cli    # crate tests only
 ├── sicario-cli/
 │   ├── Cargo.toml            # crate manifest
 │   ├── src/                  # 26 modules, ~50k lines
-│   ├── rules/                # 40+ YAML security rules
+│   ├── rules/                # 500+ YAML security rules
 │   └── test-samples/         # vulnerable code samples
+├── sicario-cloud/
+│   ├── Cargo.toml            # Axum REST API server
+│   ├── openapi.yaml          # API specification
+│   └── src/                  # auth, routes, models, webhooks
+├── convex/                   # Convex backend (database + functions)
+├── dashboard/                # Next.js web dashboard
+├── editors/vscode/           # VS Code extension
 ├── Formula/                  # Homebrew formula
 ├── .github/workflows/        # CI + release pipelines
+├── action.yml                # GitHub Action definition
 ├── install.sh                # curl installer
 └── Cross.toml                # cross-compilation config
 ```

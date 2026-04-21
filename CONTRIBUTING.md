@@ -38,12 +38,14 @@ Thanks for your interest in contributing! This guide will help you get started.
 
 ## Adding security rules
 
-Security rules live in `sicario-cli/rules/<language>/` as YAML files. To add a new rule:
+Security rules live in `sicario-cli/rules/<language>/` as YAML files. Drop a file in and it's picked up automatically.
 
 1. Create a YAML file in the appropriate language directory
 2. Follow the existing rule format (see any file in `rules/` for examples)
-3. Add test cases in `sicario-cli/test-samples/` if applicable
-4. Test your rule: `cargo run -- scan test-samples/`
+3. Include at least 3 true-positive and 3 true-negative test cases in the YAML
+4. Validate your rule: `cargo run -- rules validate`
+5. Run the test harness: `cargo run -- rules test`
+6. Test against samples: `cargo run -- scan test-samples/`
 
 ## Commit messages
 
