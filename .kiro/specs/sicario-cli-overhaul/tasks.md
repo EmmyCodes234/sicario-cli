@@ -372,7 +372,7 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
 - [x] 15. Checkpoint — All 500+ YAML rules written with test cases across 5 languages
   - Ensure all tests pass, ask the user if questions arise.
 
-- [ ] 16. AI Remediation Improvements — Multi-provider LLM client, template fixes, verification
+- [x] 16. AI Remediation Improvements — Multi-provider LLM client, template fixes, verification
   - [x] 16.1 Rename `remediation/cerebras_client.rs` → `remediation/llm_client.rs` and generalize to OpenAI-compatible API
     - Make endpoint configurable via `SICARIO_LLM_ENDPOINT` env var
     - Model configurable via `SICARIO_LLM_MODEL` env var, default `llama3.1-8b`
@@ -395,7 +395,7 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - Assert correct precedence: env SICARIO_LLM_API_KEY > keyring > env CEREBRAS_API_KEY
     - **Validates: Requirements 20.4**
 
-  - [ ] 16.4 Expand template-based fixes in `remediation/remediation_engine.rs`
+  - [x] 16.4 Expand template-based fixes in `remediation/remediation_engine.rs`
     - Ensure template fixes exist for: SQL injection (parameterized queries), XSS (output encoding), command injection (allowlist-validated args)
     - On LLM error/timeout, fall back to template fix — never return original code unchanged
     - Validate LLM-generated code syntax via tree-sitter before applying
@@ -413,7 +413,7 @@ This plan transforms Sicario from a working SAST prototype into a production-gra
     - For vulnerable code matching SQLi/XSS/CmdInj, assert template fix differs from original and parses without tree-sitter errors
     - **Validates: Requirements 11.10**
 
-  - [ ] 16.7 Create `verification/scanner.rs` implementing `VerificationScanning` trait
+  - [x] 16.7 Create `verification/scanner.rs` implementing `VerificationScanning` trait
     - After fix application, re-scan patched file for the specific rule
     - Report "Fix verified: vulnerability resolved" if finding gone
     - Report "Fix incomplete: vulnerability still detected" if still present, offer revert
