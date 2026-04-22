@@ -586,6 +586,8 @@ fn run_interactive_tui(scan_dir: PathBuf) -> Result<()> {
 ///   1. `<binary_dir>/rules/`
 ///   2. `<cwd>/sicario-cli/rules/`   (source-tree / dev mode)
 ///   3. `<cwd>/rules/`
+///
+/// Searches recursively into subdirectories (e.g. `rules/javascript/*.yaml`).
 fn discover_bundled_rules() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
 
@@ -601,24 +603,34 @@ fn discover_bundled_rules() -> Vec<PathBuf> {
 
     for dir in candidates {
         if dir.is_dir() {
-            let files: Vec<PathBuf> = std::fs::read_dir(&dir)
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e.ok())
-                .map(|e| e.path())
-                .filter(|p| {
-                    p.extension()
-                        .and_then(|e| e.to_str())
-                        .map(|e| e == "yaml" || e == "yml")
-                        .unwrap_or(false)
-                })
-                .collect();
+            let files = collect_yaml_files_recursive(&dir);
             if !files.is_empty() {
                 return files;
             }
         }
     }
     Vec::new()
+}
+
+/// Recursively collect all `.yaml` / `.yml` files under `dir`.
+fn collect_yaml_files_recursive(dir: &PathBuf) -> Vec<PathBuf> {
+    let mut result = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.filter_map(|e| e.ok()) {
+            let path = entry.path();
+            if path.is_dir() {
+                result.extend(collect_yaml_files_recursive(&path));
+            } else if path
+                .extension()
+                .and_then(|e| e.to_str())
+                .map(|e| e == "yaml" || e == "yml")
+                .unwrap_or(false)
+            {
+                result.push(path);
+            }
+        }
+    }
+    result
 }
 
 // ─── Benchmark command ─────────────────────────────────────────────────────────
