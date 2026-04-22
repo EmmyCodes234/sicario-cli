@@ -8,6 +8,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- Compiler-style diagnostic output with source context, span underlines, and rule-specific help hints
+- Recursive rule discovery for subdirectory layouts
+- 331 rules now load successfully across 5 languages
+
+### Changed
+- Default behavior: `sicario` with no args now scans the current directory instead of launching the TUI
+- TUI is still available via `sicario tui`
+
+### Fixed
+- Fixed capture amplification bug — findings are now deduplicated per rule per line (was inflated 3-4x)
+- Rule loading is now tolerant of individual bad rules (skips instead of failing whole file)
+
+### Previously Added
 - Multi-language SAST engine with tree-sitter parsing (Go, Java, JavaScript/TypeScript, Python, Rust)
 - YAML-based security rule system with 500+ built-in rules (100+ per language)
 - Secret scanning with regex, entropy detection, and provider-specific verifiers

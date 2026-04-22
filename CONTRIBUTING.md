@@ -45,7 +45,9 @@ Security rules live in `sicario-cli/rules/<language>/` as YAML files. Drop a fil
 3. Include at least 3 true-positive and 3 true-negative test cases in the YAML
 4. Validate your rule: `cargo run -- rules validate`
 5. Run the test harness: `cargo run -- rules test`
-6. Test against samples: `cargo run -- scan test-samples/`
+6. Test against samples: `sicario scan .` (scans the current directory by default)
+
+> **Tip:** Running `sicario` with no arguments scans the current directory, so you can also just run `sicario` from the repo root to test your rule against the included samples.
 
 ## Commit messages
 

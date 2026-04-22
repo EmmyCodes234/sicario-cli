@@ -39,12 +39,20 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
  |_____/|_|\___\__,_|_|  |_|\___/   SAST · SCA · Secrets · AI Fix
 
  $ sicario scan .
- ┌─────────────────────────────────────────────────┐
- │ ✓ Parsed 1,247 files across 5 languages         │
- │ ✓ Matched 500+ rules · 12 findings               │
- │ ✓ Reachability: 4 exploitable, 8 filtered       │
- │ ✓ SARIF report → results.sarif                  │
- └─────────────────────────────────────────────────┘
+   × [CRITICAL] js-eval-injection (CWE-95)
+   ╭─[src/handler.js:8:5]
+   7 │     // Process user input
+   8 │     eval(userInput);
+   ·          ^^^^^^^^^^^^^^^ Untrusted input passed to eval()
+   9 │
+   ╰─
+   help: Replace eval() with JSON.parse() or a sandboxed interpreter
+
+ ╭────────────────────────────────────────────────────────────╮
+ │  Findings: 10 total  (C:1 H:7 M:2 L:0 I:0)                │
+ │  Duration: 3.46s · 331 rules · 2 files                     │
+ │  Semgrep estimate: ~34.6s (10x slower)                      │
+ ╰────────────────────────────────────────────────────────────╯
 ```
 
 ---
@@ -69,6 +77,7 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 ### ⚡ Sicario's Answer
 
 - **Tree-sitter AST + Rayon parallelism** — seconds, not minutes
+- **Compiler-style diagnostics** — findings render like rustc/cargo errors with source context and span underlines
 - **Data-flow reachability** filters to only exploitable paths
 - **One binary** covers SAST, SCA, and secret scanning
 - **AI remediation** generates and applies patches automatically
@@ -91,6 +100,7 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 | MCP server (AI assistants) | ✅ | ❌ | ❌ | ❌ |
 | Single static binary | ✅ | ❌ | ❌ | ❌ |
 | SARIF + OWASP reports | ✅ | ✅ | ❌ | ❌ |
+| Compiler-style diagnostics | ✅ | ❌ | ❌ | ❌ |
 | Zero runtime dependencies | ✅ | ❌ | ❌ | ❌ |
 
 ---
@@ -102,7 +112,9 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 <td>
 
 **🛡️ Analysis**
-- Multi-language SAST with 500+ rules (Go, Java, JS/TS, Python, Rust)
+- Multi-language SAST with 331+ rules across 5 languages (Go, Java, JS/TS, Python, Rust)
+- Compiler-style diagnostic output (like rustc/cargo) with source context and span underlines
+- Accurate finding deduplication — one finding per rule per line, no inflated counts
 - Secret scanning with entropy + provider verifiers
 - SCA via OSV and GHSA advisory databases
 - Data-flow reachability analysis
@@ -130,7 +142,7 @@ Sicario replaces legacy Python and Node.js security scanners with a single, stat
 **📊 Reporting**
 - SARIF output for GitHub Code Scanning
 - OWASP Top 10 compliance (JSON + Markdown)
-- Branded terminal tables
+- Compiler-style diagnostics with severity, CWE headers, and help hints
 - JSON export for pipelines
 - Multi-format simultaneous output
 
@@ -180,8 +192,14 @@ cargo build --release
 ### Usage
 
 ```bash
-# Scan current directory
+# Scan current directory (default when run with no args)
+sicario
+
+# Explicit scan command
 sicario scan .
+
+# Interactive TUI mode
+sicario tui
 
 # JSON output
 sicario scan . --format json
@@ -273,6 +291,7 @@ sicario completions bash >> ~/.bashrc
 | `engine/` | SAST rule matching, data-flow reachability, SCA advisory lookup |
 | `scanner/` | Secret detection (patterns, entropy, provider verifiers) |
 | `output/` | Branded text tables, JSON, SARIF formatters |
+| `output/diagnostics.rs` | Compiler-style diagnostic renderer |
 | `remediation/` | AI-powered code fixes via Cerebras, backup manager |
 | `tui/` | Interactive terminal UI with async message passing |
 | `auth/` | OAuth 2.0 device flow with PKCE, secure token storage |
