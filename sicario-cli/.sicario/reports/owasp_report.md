@@ -1,6 +1,6 @@
 # OWASP Top 10 Compliance Report
 
-**Total vulnerabilities:** 1385  
+**Total vulnerabilities:** 1403  
 **Categories affected:** 6/10  
 
 ## Category Breakdown
@@ -11,7 +11,7 @@
 | ⚠️ A02:2021 – Cryptographic Failures | 75 | 0 | 72 | 3 | 0 | 0 |
 | ⚠️ A03:2021 – Injection | 106 | 46 | 60 | 0 | 0 | 0 |
 | ⚠️ A04:2021 – Insecure Design | 11 | 0 | 0 | 11 | 0 | 0 |
-| ⚠️ A05:2021 – Security Misconfiguration | 1156 | 0 | 0 | 0 | 1156 | 0 |
+| ⚠️ A05:2021 – Security Misconfiguration | 1174 | 0 | 0 | 0 | 1174 | 0 |
 | ✅ A06:2021 – Vulnerable and Outdated Components | 0 | 0 | 0 | 0 | 0 | 0 |
 | ✅ A07:2021 – Identification and Authentication Failures | 0 | 0 | 0 | 0 | 0 | 0 |
 | ⚠️ A08:2021 – Software and Data Integrity Failures | 33 | 33 | 0 | 0 | 0 | 0 |
