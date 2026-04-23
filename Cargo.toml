@@ -1,5 +1,5 @@
 [workspace]
-members = ["sicario-cli", "sicario-cloud"]
+members = ["sicario-cli"]
 resolver = "2"
 
 [workspace.package]
