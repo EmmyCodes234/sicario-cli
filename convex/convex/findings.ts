@@ -146,6 +146,178 @@ export const getCriticalForScan = query({
   },
 });
 
+const SEVERITY_ORDER: Record<string, number> = {
+  Critical: 5,
+  High: 4,
+  Medium: 3,
+  Low: 2,
+  Info: 1,
+};
+
+export const listAdvanced = query({
+  args: {
+    severity: v.optional(v.array(v.string())),
+    triageState: v.optional(v.array(v.string())),
+    search: v.optional(v.string()),
+    confidenceMin: v.optional(v.number()),
+    confidenceMax: v.optional(v.number()),
+    reachable: v.optional(v.boolean()),
+    scanId: v.optional(v.string()),
+    owaspCategory: v.optional(v.string()),
+    sortBy: v.optional(v.string()),
+    sortOrder: v.optional(v.string()),
+    cursor: v.optional(v.number()),
+    perPage: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const allFindings = await ctx.db.query("findings").collect();
+
+    const filtered = allFindings.filter((f) => {
+      if (args.severity && args.severity.length > 0 && !args.severity.includes(f.severity)) return false;
+      if (args.triageState && args.triageState.length > 0 && !args.triageState.includes(f.triageState)) return false;
+      if (args.confidenceMin !== undefined && f.confidenceScore < args.confidenceMin) return false;
+      if (args.confidenceMax !== undefined && f.confidenceScore > args.confidenceMax) return false;
+      if (args.reachable !== undefined && f.reachable !== args.reachable) return false;
+      if (args.scanId && f.scanId !== args.scanId) return false;
+      if (args.owaspCategory && f.owaspCategory !== args.owaspCategory) return false;
+      if (args.search) {
+        const term = args.search.toLowerCase();
+        const inRuleId = f.ruleId.toLowerCase().includes(term);
+        const inFilePath = f.filePath.toLowerCase().includes(term);
+        const inSnippet = f.snippet.toLowerCase().includes(term);
+        if (!inRuleId && !inFilePath && !inSnippet) return false;
+      }
+      return true;
+    });
+
+    const sortBy = args.sortBy ?? "createdAt";
+    const sortOrder = args.sortOrder ?? "desc";
+
+    filtered.sort((a: any, b: any) => {
+      let aVal: number | string;
+      let bVal: number | string;
+
+      if (sortBy === "severity") {
+        aVal = SEVERITY_ORDER[a.severity] ?? 0;
+        bVal = SEVERITY_ORDER[b.severity] ?? 0;
+      } else if (sortBy === "confidenceScore") {
+        aVal = a.confidenceScore;
+        bVal = b.confidenceScore;
+      } else if (sortBy === "filePath") {
+        aVal = a.filePath;
+        bVal = b.filePath;
+      } else if (sortBy === "updatedAt") {
+        aVal = a.updatedAt;
+        bVal = b.updatedAt;
+      } else {
+        aVal = a.createdAt;
+        bVal = b.createdAt;
+      }
+
+      if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    const total = filtered.length;
+    const cursor = args.cursor ?? 0;
+    const perPage = args.perPage ?? 20;
+    const items = filtered.slice(cursor, cursor + perPage).map(mapFinding);
+    const nextCursor = cursor + perPage < total ? cursor + perPage : null;
+
+    return { items, total, nextCursor };
+  },
+});
+
+export const getTimeline = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => {
+    const finding = await ctx.db
+      .query("findings")
+      .withIndex("by_findingId", (q) => q.eq("findingId", args.id))
+      .first();
+    if (!finding) return null;
+
+    const timeline: { timestamp: string; state: string; action: string }[] = [
+      { timestamp: finding.createdAt, state: "Open", action: "created" },
+    ];
+
+    if (finding.triageState !== "Open") {
+      timeline.push({
+        timestamp: finding.updatedAt,
+        state: finding.triageState,
+        action: "triaged",
+      });
+    }
+
+    return timeline;
+  },
+});
+
+export const getAdjacentIds = query({
+  args: {
+    currentId: v.string(),
+    severity: v.optional(v.array(v.string())),
+    triageState: v.optional(v.array(v.string())),
+    search: v.optional(v.string()),
+    scanId: v.optional(v.string()),
+    sortBy: v.optional(v.string()),
+    sortOrder: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const allFindings = await ctx.db.query("findings").collect();
+
+    const filtered = allFindings.filter((f) => {
+      if (args.severity && args.severity.length > 0 && !args.severity.includes(f.severity)) return false;
+      if (args.triageState && args.triageState.length > 0 && !args.triageState.includes(f.triageState)) return false;
+      if (args.scanId && f.scanId !== args.scanId) return false;
+      if (args.search) {
+        const term = args.search.toLowerCase();
+        const inRuleId = f.ruleId.toLowerCase().includes(term);
+        const inFilePath = f.filePath.toLowerCase().includes(term);
+        const inSnippet = f.snippet.toLowerCase().includes(term);
+        if (!inRuleId && !inFilePath && !inSnippet) return false;
+      }
+      return true;
+    });
+
+    const sortBy = args.sortBy ?? "createdAt";
+    const sortOrder = args.sortOrder ?? "desc";
+
+    filtered.sort((a: any, b: any) => {
+      let aVal: number | string;
+      let bVal: number | string;
+
+      if (sortBy === "severity") {
+        aVal = SEVERITY_ORDER[a.severity] ?? 0;
+        bVal = SEVERITY_ORDER[b.severity] ?? 0;
+      } else if (sortBy === "confidenceScore") {
+        aVal = a.confidenceScore;
+        bVal = b.confidenceScore;
+      } else if (sortBy === "filePath") {
+        aVal = a.filePath;
+        bVal = b.filePath;
+      } else if (sortBy === "updatedAt") {
+        aVal = a.updatedAt;
+        bVal = b.updatedAt;
+      } else {
+        aVal = a.createdAt;
+        bVal = b.createdAt;
+      }
+
+      if (aVal < bVal) return sortOrder === "asc" ? -1 : 1;
+      if (aVal > bVal) return sortOrder === "asc" ? 1 : -1;
+      return 0;
+    });
+
+    const index = filtered.findIndex((f) => f.findingId === args.currentId);
+    const previousId = index > 0 ? filtered[index - 1].findingId : null;
+    const nextId = index >= 0 && index < filtered.length - 1 ? filtered[index + 1].findingId : null;
+
+    return { previousId, nextId };
+  },
+});
+
 // Helper to map internal Convex doc to API-compatible shape
 function mapFinding(f: any) {
   return {

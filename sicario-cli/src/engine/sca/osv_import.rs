@@ -1,13 +1,16 @@
-//! OSV.dev bulk JSON import
+//! OSV.dev vulnerability import
 //!
-//! Downloads and decompresses the bulk JSON export for each ecosystem from
-//! `https://osv-vulnerabilities.storage.googleapis.com/{ecosystem}/all.zip`,
-//! parses the OSV JSON schema, and upserts records into the local SQLite cache.
+//! Provides two import strategies:
+//! 1. Per-package query via `POST https://api.osv.dev/v1/query` (primary)
+//! 2. Bulk ZIP download from GCS (legacy fallback)
+//!
+//! The per-package query is used during scans to fetch vulnerability data
+//! for specific dependencies found in lockfiles.
 
 use anyhow::{Context, Result};
 use chrono::Utc;
 use rusqlite::{params, Connection};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::io::{Cursor, Read};
 use std::sync::{Arc, Mutex};
 
@@ -15,7 +18,10 @@ use super::known_vulnerability::KnownVulnerability;
 use super::vuln_db::{owasp_to_str, severity_to_str};
 use crate::engine::Severity;
 
-/// OSV.dev bulk export base URL
+/// OSV.dev REST API endpoint for per-package queries
+const OSV_QUERY_URL: &str = "https://api.osv.dev/v1/query";
+
+/// OSV.dev bulk export base URL (legacy fallback)
 const OSV_BASE_URL: &str = "https://osv-vulnerabilities.storage.googleapis.com";
 
 // ---------------------------------------------------------------------------
@@ -76,6 +82,29 @@ struct OsvSeverity {
 }
 
 // ---------------------------------------------------------------------------
+// OSV query API request/response types
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+struct OsvQueryRequest {
+    package: OsvQueryPackage,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    version: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+struct OsvQueryPackage {
+    name: String,
+    ecosystem: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OsvQueryResponse {
+    #[serde(default)]
+    vulns: Vec<OsvRecord>,
+}
+
+// ---------------------------------------------------------------------------
 // Importer
 // ---------------------------------------------------------------------------
 
@@ -88,8 +117,104 @@ impl OsvImporter {
         Self { conn }
     }
 
-    /// Download and import all advisories for a single ecosystem.
-    /// Returns the number of new/updated records upserted.
+    /// Query OSV.dev for vulnerabilities affecting a specific package+version.
+    ///
+    /// Calls `POST https://api.osv.dev/v1/query` and upserts all returned
+    /// records into the local SQLite cache. Returns the number of records upserted.
+    pub fn query_package(
+        &self,
+        ecosystem: &str,
+        package_name: &str,
+        version: &str,
+    ) -> Result<usize> {
+        let request_body = OsvQueryRequest {
+            package: OsvQueryPackage {
+                name: package_name.to_string(),
+                ecosystem: ecosystem.to_string(),
+            },
+            version: if version.is_empty() {
+                None
+            } else {
+                Some(version.to_string())
+            },
+        };
+
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let response = client
+            .post(OSV_QUERY_URL)
+            .header("Content-Type", "application/json")
+            .header("User-Agent", "sicario-cli")
+            .json(&request_body)
+            .send()
+            .with_context(|| {
+                format!(
+                    "Failed to query OSV for {}/{}@{}",
+                    ecosystem, package_name, version
+                )
+            })?;
+
+        if !response.status().is_success() {
+            anyhow::bail!(
+                "OSV query returned HTTP {} for {}/{}",
+                response.status(),
+                ecosystem,
+                package_name
+            );
+        }
+
+        let osv_response: OsvQueryResponse = response
+            .json()
+            .context("Failed to parse OSV query response")?;
+
+        let mut count = 0usize;
+        for record in &osv_response.vulns {
+            for affected in &record.affected {
+                match osv_record_to_known_vulnerability(record, affected) {
+                    Ok(kv) => {
+                        if self.upsert_kv(&kv).is_ok() {
+                            count += 1;
+                        }
+                    }
+                    Err(e) => {
+                        tracing::debug!("Skipping OSV record {}: {}", record.id, e);
+                    }
+                }
+            }
+        }
+
+        Ok(count)
+    }
+
+    /// Query OSV.dev for a batch of dependencies and upsert all results.
+    /// Returns the total number of records upserted.
+    pub fn query_packages(
+        &self,
+        deps: &[(String, String, String)], // (ecosystem, package_name, version)
+    ) -> Result<usize> {
+        let mut total = 0usize;
+        for (ecosystem, package_name, version) in deps {
+            match self.query_package(ecosystem, package_name, version) {
+                Ok(count) => total += count,
+                Err(e) => {
+                    tracing::warn!(
+                        "OSV query failed for {}/{}@{}: {}",
+                        ecosystem,
+                        package_name,
+                        version,
+                        e
+                    );
+                }
+            }
+        }
+        Ok(total)
+    }
+
+    /// Download and import all advisories for a single ecosystem (bulk ZIP).
+    /// This is the legacy fallback approach. Returns the number of records upserted.
     pub fn import_ecosystem(&self, ecosystem: &str) -> Result<usize> {
         let url = format!("{}/{}/all.zip", OSV_BASE_URL, ecosystem);
 
@@ -143,7 +268,6 @@ impl OsvImporter {
     }
 
     /// Parse a single OSV JSON string and upsert into the database.
-    /// Returns 1 if the record was new/updated, 0 if skipped.
     pub fn import_osv_json(&self, json_str: &str, _ecosystem: &str) -> Result<usize> {
         let record: OsvRecord =
             serde_json::from_str(json_str).context("Failed to parse OSV JSON")?;
@@ -153,7 +277,6 @@ impl OsvImporter {
         for affected in &record.affected {
             let kv = osv_record_to_known_vulnerability(&record, affected)?;
 
-            // Check if we already have this record and it hasn't changed
             if !self.should_upsert(&kv, record.modified.as_deref())? {
                 continue;
             }
@@ -168,7 +291,7 @@ impl OsvImporter {
     /// Determine whether a record should be upserted based on the `modified` timestamp.
     fn should_upsert(&self, kv: &KnownVulnerability, modified: Option<&str>) -> Result<bool> {
         let Some(modified_str) = modified else {
-            return Ok(true); // No modified field → always upsert
+            return Ok(true);
         };
 
         let conn = self
@@ -176,7 +299,6 @@ impl OsvImporter {
             .lock()
             .map_err(|e| anyhow::anyhow!("Lock error: {}", e))?;
 
-        // Check existing last_synced_at for this record
         let existing: rusqlite::Result<String> = conn.query_row(
             "SELECT last_synced_at FROM known_vulnerabilities
              WHERE package_name = ?1 AND ecosystem = ?2
@@ -186,10 +308,7 @@ impl OsvImporter {
         );
 
         match existing {
-            Ok(stored_ts) => {
-                // Only upsert if the upstream record is newer
-                Ok(modified_str > stored_ts.as_str())
-            }
+            Ok(stored_ts) => Ok(modified_str > stored_ts.as_str()),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(true),
             Err(e) => Err(e.into()),
         }
@@ -237,7 +356,6 @@ fn osv_record_to_known_vulnerability(
     record: &OsvRecord,
     affected: &OsvAffected,
 ) -> Result<KnownVulnerability> {
-    // Extract CVE and GHSA IDs from the record id + aliases
     let mut cve_id: Option<String> = None;
     let mut ghsa_id: Option<String> = None;
 
@@ -252,7 +370,6 @@ fn osv_record_to_known_vulnerability(
         }
     }
 
-    // Build semver range strings from OSV range events
     let mut vulnerable_versions: Vec<String> = Vec::new();
     let mut patched_version: Option<String> = None;
 
@@ -275,7 +392,6 @@ fn osv_record_to_known_vulnerability(
                 patched_version = Some(v.clone());
             }
             if let Some(ref v) = event.last_affected {
-                // last_affected means the range is [introduced, last_affected]
                 let range_str = match &introduced {
                     Some(intro) => format!(">={}, <={}", intro, v),
                     None => format!("<={}", v),
@@ -284,7 +400,6 @@ fn osv_record_to_known_vulnerability(
             }
         }
 
-        // Build range string from introduced/fixed pair
         let range_str = match (&introduced, &fixed) {
             (Some(intro), Some(fix)) => format!(">={}, <{}", intro, fix),
             (Some(intro), None) => format!(">={}", intro),
@@ -297,7 +412,6 @@ fn osv_record_to_known_vulnerability(
         }
     }
 
-    // Determine severity from CVSS score
     let severity = osv_severity_to_enum(&record.severity);
 
     let summary = record
@@ -314,7 +428,7 @@ fn osv_record_to_known_vulnerability(
         patched_version,
         summary,
         severity,
-        owasp_category: None, // OSV doesn't provide OWASP categories directly
+        owasp_category: None,
         last_synced_at: Utc::now(),
     })
 }
@@ -322,19 +436,15 @@ fn osv_record_to_known_vulnerability(
 fn osv_severity_to_enum(severities: &[OsvSeverity]) -> Severity {
     for s in severities {
         if s.severity_type == "CVSS_V3" || s.severity_type == "CVSS_V2" {
-            // Parse CVSS score from the score string (e.g. "CVSS:3.1/AV:N/AC:L/...")
-            // Extract the base score from the vector string
             if let Some(score) = extract_cvss_base_score(&s.score) {
                 return cvss_score_to_severity(score);
             }
         }
     }
-    Severity::Medium // Default when no CVSS data available
+    Severity::Medium
 }
 
 fn extract_cvss_base_score(score_str: &str) -> Option<f32> {
-    // CVSS vector strings don't contain the numeric score directly.
-    // Try to parse as a plain float first (some feeds provide it that way).
     if let Ok(v) = score_str.parse::<f32>() {
         return Some(v);
     }
@@ -398,7 +508,6 @@ mod tests {
         let count = importer.import_osv_json(SAMPLE_OSV_JSON, "npm").unwrap();
         assert_eq!(count, 1);
 
-        // Verify the record was inserted
         let locked = conn.lock().unwrap();
         let name: String = locked
             .query_row(
@@ -441,7 +550,6 @@ mod tests {
         ).unwrap();
         let versions: Vec<String> = serde_json::from_str(&versions_json).unwrap();
         assert!(!versions.is_empty());
-        // Should contain a range ending at 4.17.21
         assert!(versions.iter().any(|v| v.contains("4.17.21")));
     }
 
@@ -452,5 +560,46 @@ mod tests {
         assert_eq!(cvss_score_to_severity(5.0), Severity::Medium);
         assert_eq!(cvss_score_to_severity(7.5), Severity::High);
         assert_eq!(cvss_score_to_severity(9.5), Severity::Critical);
+    }
+
+    #[test]
+    fn test_osv_query_request_serialization() {
+        let req = OsvQueryRequest {
+            package: OsvQueryPackage {
+                name: "lodash".to_string(),
+                ecosystem: "npm".to_string(),
+            },
+            version: Some("4.17.20".to_string()),
+        };
+        let json = serde_json::to_string(&req).unwrap();
+        assert!(json.contains("\"name\":\"lodash\""));
+        assert!(json.contains("\"ecosystem\":\"npm\""));
+        assert!(json.contains("\"version\":\"4.17.20\""));
+    }
+
+    #[test]
+    fn test_osv_query_response_parsing() {
+        let json = r#"{
+            "vulns": [{
+                "id": "GHSA-test-1234",
+                "aliases": ["CVE-2021-99999"],
+                "summary": "Test vuln",
+                "affected": [{
+                    "package": {"name": "test-pkg", "ecosystem": "npm"},
+                    "ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "2.0.0"}]}]
+                }],
+                "severity": [{"type": "CVSS_V3", "score": "8.0"}]
+            }]
+        }"#;
+        let resp: OsvQueryResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(resp.vulns.len(), 1);
+        assert_eq!(resp.vulns[0].id, "GHSA-test-1234");
+    }
+
+    #[test]
+    fn test_osv_query_response_empty() {
+        let json = r#"{}"#;
+        let resp: OsvQueryResponse = serde_json::from_str(json).unwrap();
+        assert!(resp.vulns.is_empty());
     }
 }

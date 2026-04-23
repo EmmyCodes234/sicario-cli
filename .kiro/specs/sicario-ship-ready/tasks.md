@@ -1,0 +1,34 @@
+# Tasks: Sicario Ship-Ready Fix Sprint
+
+- [x] 1. Remove the `dashboard/` directory and all references to the old Next.js dashboard from README.md, .gitignore, and CI configs. Verify the monorepo builds cleanly without it.
+
+- [x] 2. Fix scan report metadata in `cmd_scan()` and `cmd_cloud_publish()` in `sicario-cli/src/main.rs`: pass the real `files_scanned` count and build a `language_breakdown` HashMap from file extensions during the scan instead of hardcoded `0` and empty map. Verify JSON output includes correct values.
+
+- [x] 3. Wire cloud exposure analysis into the scan pipeline: in `cmd_scan()`, auto-detect K8s manifests, run `CloudExposureAnalyzer` + `assign_cloud_priority()` on findings if found, add `--no-cloud` flag to disable, and ensure `cloud_exposed` field is populated in JSON/SARIF output.
+
+- [x] 4. Implement real OSV.dev SCA importer: make `OsvImporter::import_ecosystem()` call `POST https://api.osv.dev/v1/query`, parse responses into `KnownVulnerability` records, trigger cache refresh in `cmd_scan()` when cache is empty or stale (>24h), parse lockfiles to extract package+version pairs, and query the local cache for each. Test with a known-vulnerable dependency.
+
+- [x] 5. Build Cloud API via Convex HTTP actions: add `POST /api/v1/scans`, `GET /api/v1/whoami`, `POST /oauth/device/code`, and `POST /oauth/token` HTTP actions in `convex/convex/http.ts`, add a `deviceCodes` table to the schema, add `/auth/device` page to the frontend for CLI code approval, update CLI default URLs to point at the Convex site URL, and test the full flow end-to-end (login → approve → whoami → publish → dashboard).
+
+- [x] 6. Implement org provisioning on first login: add `ensureOrg` mutation that auto-creates a personal org + admin membership for new users, create `useCurrentOrg()` hook in the frontend, replace all `PLACEHOLDER_ORG = 'org-1'` references in ProjectsPage, ProjectDetailPage, and SettingsPage with the real orgId, and update RBAC hooks accordingly.
+
+- [x] 7. Add org creation and multi-org support to the backend: add `createOrg` mutation to `convex/convex/organizations.ts` that creates a new org + admin membership for the authenticated user, add `listUserOrgs` query that returns all orgs the user belongs to (orgId, name, role, createdAt) by joining memberships with organizations, copy updated file to `sicario-frontend/convex/organizations.ts`, and update `sicario-frontend/convex/_generated/api.d.ts` if needed.
+
+- [x] 8. Upgrade `useCurrentOrg()` hook for multi-org switching: refactor `sicario-frontend/src/hooks/useCurrentOrg.ts` to fetch all user orgs via `listUserOrgs`, track `activeOrgId` in state initialized from `localStorage` key `sicario:activeOrgId`, persist selection on switch, fall back to first org if stored orgId is invalid, still call `ensureOrg` on first load, and return `{ orgId, orgs, switchOrg, createOrg, isLoading }`.
+
+- [x] 9. Build the `OrgSwitcher` dropdown component: create `sicario-frontend/src/components/dashboard/OrgSwitcher.tsx` with a dropdown showing all user orgs (name + role badge + colored initial avatar), the active org highlighted, a "Create Organization" option at the bottom with inline name input, keyboard navigation (arrow keys, Enter, Escape), and mount it in the dashboard sidebar/layout.
+
+- [x] 10. Schema changes for org-scoped projects and scans: In `convex/convex/schema.ts`, add `orgId: v.string()` to the `projects` table and add a `by_orgId` index on `["orgId"]`. Add `orgId: v.optional(v.string())` to the `scans` table and add a `by_orgId` index on `["orgId"]`. Add `orgId: v.optional(v.string())` and `projectId: v.optional(v.string())` to the `findings` table. Verify the schema compiles.
+
+- [x] 11. Update `projects.ts` for org scoping: In `convex/convex/projects.ts`, update `projects.list` to accept a required `orgId` arg and filter using the `by_orgId` index. Update `projects.create` to require `orgId` and store it on the project record. Add a `listByOrg` query that returns all projects for a given `orgId`. Update `mapProject` to include `org_id` in the response.
+
+- [x] 12. Update scan ingestion for org + project resolution: In `convex/convex/http.ts`, update the `POST /api/v1/scans` handler to: (a) resolve the authenticated user's userId and look up their orgId from the memberships table (or use the `X-Sicario-Org` header if present), (b) return 403 if no membership found, (c) query projects by orgId to find a match on `repositoryUrl` vs `metadata.repository`, (d) auto-create a project if no match, (e) pass `orgId` and `projectId` to the scan insert mutation. Update `convex/convex/scans.ts` `insert` mutation to accept and store `orgId` and `projectId` on the scan record and each finding.
+
+- [x] 13. Update frontend ProjectsPage for org scoping: In `sicario-frontend/src/pages/dashboard/ProjectsPage.tsx`, change `useQuery(api.projects.list)` to `useQuery(api.projects.list, { orgId })` using the orgId from `useCurrentOrg()`. Ensure the `CreateProjectModal` passes `orgId` to the create mutation. Skip the query when orgId is not yet available.
+
+- [x] 14. Update frontend ScansPage for org scoping: Update the scans list query to accept and filter by `orgId` from `useCurrentOrg()`. On the scan detail page, display the associated project name and organization name.
+
+- [x] 15. Add `--org` flag to CLI: In `sicario-cli/src/main.rs`, add an optional `--org <ORG_ID>` flag to the `scan` (when `--publish` is used) and `publish` subcommands. When provided, include it as an `X-Sicario-Org` HTTP header on the `POST /api/v1/scans` request. When not provided, omit the header so the server resolves from membership.
+
+- [x] 16. Sync and deploy: copy updated `convex/convex/` files to `sicario-frontend/convex/`, run `npx convex dev --once`, verify frontend builds with `npm run build`, commit and push all changes to both repos, and verify Netlify deployment succeeds.
+                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            

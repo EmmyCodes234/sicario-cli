@@ -5,9 +5,11 @@ export const insert = mutation({
   args: {
     scanId: v.string(),
     report: v.any(),
+    orgId: v.optional(v.string()),
+    projectId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { scanId, report } = args;
+    const { scanId, report, orgId, projectId } = args;
     const meta = report.metadata;
     const now = new Date().toISOString();
 
@@ -23,6 +25,8 @@ export const insert = mutation({
       filesScanned: meta.files_scanned ?? 0,
       languageBreakdown: meta.language_breakdown ?? {},
       tags: meta.tags ?? [],
+      orgId,
+      projectId,
       createdAt: now,
     });
 
@@ -46,6 +50,8 @@ export const insert = mutation({
         cweId: f.cwe_id ?? undefined,
         owaspCategory: f.owasp_category ?? undefined,
         fingerprint: f.fingerprint ?? "",
+        orgId,
+        projectId,
         triageState: "Open",
         createdAt: now,
         updatedAt: now,
@@ -75,6 +81,26 @@ export const get = query({
     const criticalCount = findings.filter((f) => f.severity === "Critical").length;
     const highCount = findings.filter((f) => f.severity === "High").length;
 
+    // Resolve project name
+    let projectName: string | null = null;
+    if (scan.projectId) {
+      const project = await ctx.db
+        .query("projects")
+        .withIndex("by_projectId", (q) => q.eq("projectId", scan.projectId!))
+        .first();
+      if (project) projectName = project.name;
+    }
+
+    // Resolve org name
+    let orgName: string | null = null;
+    if (scan.orgId) {
+      const org = await ctx.db
+        .query("organizations")
+        .withIndex("by_orgId", (q) => q.eq("orgId", scan.orgId!))
+        .first();
+      if (org) orgName = org.name;
+    }
+
     return {
       id: scan.scanId,
       repository: scan.repository,
@@ -89,6 +115,10 @@ export const get = query({
       findings_count: findingsCount,
       critical_count: criticalCount,
       high_count: highCount,
+      org_id: scan.orgId ?? null,
+      org_name: orgName,
+      project_id: scan.projectId ?? null,
+      project_name: projectName,
     };
   },
 });
@@ -99,13 +129,23 @@ export const list = query({
     perPage: v.optional(v.number()),
     repository: v.optional(v.string()),
     branch: v.optional(v.string()),
+    orgId: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const page = args.page ?? 1;
     const perPage = args.perPage ?? 20;
 
-    let scansQuery = ctx.db.query("scans").order("desc");
-    const allScans = await scansQuery.collect();
+    // Use by_orgId index when orgId is provided, otherwise fetch all
+    let allScans;
+    if (args.orgId) {
+      allScans = await ctx.db
+        .query("scans")
+        .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+        .order("desc")
+        .collect();
+    } else {
+      allScans = await ctx.db.query("scans").order("desc").collect();
+    }
 
     const filtered = allScans.filter((s) => {
       if (args.repository && s.repository !== args.repository) return false;
@@ -115,18 +155,30 @@ export const list = query({
 
     const total = filtered.length;
     const offset = (page - 1) * perPage;
-    const items = filtered.slice(offset, offset + perPage).map((s) => ({
-      id: s.scanId,
-      repository: s.repository,
-      branch: s.branch,
-      commit_sha: s.commitSha,
-      timestamp: s.timestamp,
-      duration_ms: s.durationMs,
-      rules_loaded: s.rulesLoaded,
-      files_scanned: s.filesScanned,
-      language_breakdown: s.languageBreakdown,
-      tags: s.tags,
-    }));
+    const paged = filtered.slice(offset, offset + perPage);
+
+    // Enrich each scan with its findings count
+    const items = await Promise.all(
+      paged.map(async (s) => {
+        const findings = await ctx.db
+          .query("findings")
+          .withIndex("by_scanId", (q) => q.eq("scanId", s.scanId))
+          .collect();
+        return {
+          id: s.scanId,
+          repository: s.repository,
+          branch: s.branch,
+          commit_sha: s.commitSha,
+          timestamp: s.timestamp,
+          duration_ms: s.durationMs,
+          rules_loaded: s.rulesLoaded,
+          files_scanned: s.filesScanned,
+          language_breakdown: s.languageBreakdown,
+          tags: s.tags,
+          findings_count: findings.length,
+        };
+      }),
+    );
 
     return { page, per_page: perPage, total, items };
   },

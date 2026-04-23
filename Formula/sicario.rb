@@ -9,7 +9,7 @@
 #      Run: shasum -a 256 sicario-macos-x86_64 sicario-macos-aarch64 sicario-linux-x86_64
 class Sicario < Formula
   desc "Ultra-fast SAST security scanner with AI-powered remediation"
-  homepage "https://github.com/EmmyCodes234/sicario-cli"
+  homepage "https://usesicario.xyz"
   version "0.1.0"
 
   license "MIT"

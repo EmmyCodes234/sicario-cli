@@ -452,7 +452,6 @@ cargo test -p sicario-cli    # crate tests only
 │   ├── openapi.yaml          # API specification
 │   └── src/                  # auth, routes, models, webhooks
 ├── convex/                   # Convex backend (database + functions)
-├── dashboard/                # Next.js web dashboard
 ├── editors/vscode/           # VS Code extension
 ├── Formula/                  # Homebrew formula
 ├── .github/workflows/        # CI + release pipelines

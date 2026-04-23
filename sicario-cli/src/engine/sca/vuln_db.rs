@@ -193,6 +193,45 @@ impl VulnerabilityDatabaseManager {
         Ok(())
     }
 
+    /// Check if the cache is empty or stale (>24h) and needs a refresh.
+    pub fn is_stale(&self) -> Result<bool> {
+        match self.last_synced_at()? {
+            None => Ok(true), // Never synced
+            Some(ts) => {
+                let age = Utc::now() - ts;
+                Ok(age.num_hours() >= 24)
+            }
+        }
+    }
+
+    /// Refresh the cache if it is empty or stale (>24h old).
+    /// Uses per-package OSV queries for the given dependencies.
+    /// Returns the number of new/updated entries, or 0 if cache is fresh.
+    pub fn refresh_if_stale(
+        &self,
+        deps: &[(String, String, String)], // (ecosystem, package_name, version)
+    ) -> Result<usize> {
+        if !self.is_stale()? {
+            return Ok(0);
+        }
+        self.sync_for_dependencies(deps)
+    }
+
+    /// Sync vulnerability data for a specific set of dependencies using
+    /// per-package OSV.dev queries. Updates the last_synced_at timestamp.
+    pub fn sync_for_dependencies(
+        &self,
+        deps: &[(String, String, String)],
+    ) -> Result<usize> {
+        use super::osv_import::OsvImporter;
+
+        let osv = OsvImporter::new(Arc::clone(&self.conn));
+        let total = osv.query_packages(deps)?;
+
+        self.update_last_synced_at(Utc::now())?;
+        Ok(total)
+    }
+
     /// Force an immediate synchronization from all configured upstream sources.
     /// Returns the count of new/updated entries.
     pub fn sync_now(&self) -> Result<usize> {
@@ -201,7 +240,7 @@ impl VulnerabilityDatabaseManager {
 
         let mut total = 0usize;
 
-        // OSV.dev bulk import for each ecosystem
+        // OSV.dev bulk import for each ecosystem (legacy fallback)
         let osv = OsvImporter::new(Arc::clone(&self.conn));
         for ecosystem in &["npm", "PyPI", "crates.io", "Maven", "Go"] {
             match osv.import_ecosystem(ecosystem) {
@@ -486,5 +525,26 @@ mod tests {
         assert!(is_version_affected(&v, &[">=4.0.0, <4.17.21".to_string()]));
         assert!(!is_version_affected(&v, &[">=4.17.21".to_string()]));
         assert!(!is_version_affected(&v, &[]));
+    }
+
+    #[test]
+    fn test_is_stale_when_never_synced() {
+        let (db, _dir) = make_db();
+        assert!(db.is_stale().unwrap(), "Should be stale when never synced");
+    }
+
+    #[test]
+    fn test_is_stale_when_recently_synced() {
+        let (db, _dir) = make_db();
+        db.update_last_synced_at(Utc::now()).unwrap();
+        assert!(!db.is_stale().unwrap(), "Should not be stale when just synced");
+    }
+
+    #[test]
+    fn test_is_stale_when_old_sync() {
+        let (db, _dir) = make_db();
+        let old = Utc::now() - chrono::Duration::hours(25);
+        db.update_last_synced_at(old).unwrap();
+        assert!(db.is_stale().unwrap(), "Should be stale when synced >24h ago");
     }
 }

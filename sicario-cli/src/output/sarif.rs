@@ -128,6 +128,9 @@ pub struct SarifPropertyBag {
     /// Confidence rank on 0–100 scale.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub rank: Option<f64>,
+    /// Whether the finding is in a cloud-exposed service.
+    #[serde(rename = "cloudExposed", skip_serializing_if = "Option::is_none")]
+    pub cloud_exposed: Option<bool>,
 }
 
 // ─── Severity Mapping ─────────────────────────────────────────────────────────
@@ -214,6 +217,7 @@ pub fn emit_sarif(vulns: &[Vulnerability], tool_version: &str) -> SarifDocument 
                 taxa,
                 properties: Some(SarifPropertyBag {
                     rank: Some(confidence_score * 100.0),
+                    cloud_exposed: v.cloud_exposed,
                 }),
             }
         })

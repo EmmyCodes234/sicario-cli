@@ -32,3 +32,6 @@ node_modules/
 # Coverage
 lcov.info
 tarpaulin-report.html
+
+# Sicario Frontend (private repo — do not commit to sicario-cli)
+sicario-frontend/

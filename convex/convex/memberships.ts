@@ -11,7 +11,11 @@ export const list = query({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    await requireRole(ctx, args.userId, args.orgId, "admin");
+    // Gracefully return empty if user has no membership (e.g. dev/demo mode)
+    const callerMembership = await getUserMembership(ctx, args.userId, args.orgId);
+    if (!callerMembership) return [];
+    if (callerMembership.role !== "admin") return [];
+
     const memberships = await ctx.db
       .query("memberships")
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))

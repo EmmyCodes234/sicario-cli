@@ -3,9 +3,13 @@ import { v } from "convex/values";
 import { requireRole } from "./rbac";
 
 export const list = query({
-  args: {},
-  handler: async (ctx) => {
-    const projects = await ctx.db.query("projects").order("desc").collect();
+  args: { orgId: v.string() },
+  handler: async (ctx, args) => {
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+      .order("desc")
+      .collect();
     return projects.map(mapProject);
   },
 });
@@ -30,7 +34,7 @@ export const create = mutation({
     description: v.optional(v.string()),
     team_id: v.optional(v.string()),
     userId: v.optional(v.string()),
-    orgId: v.optional(v.string()),
+    orgId: v.string(),
   },
   handler: async (ctx, args) => {
     // Enforce RBAC when auth context is provided
@@ -44,6 +48,7 @@ export const create = mutation({
       name: args.name,
       repositoryUrl: args.repository_url ?? "",
       description: args.description ?? "",
+      orgId: args.orgId,
       teamId: args.team_id,
       createdAt: now,
     });
@@ -84,12 +89,24 @@ export const update = mutation({
   },
 });
 
+export const listByOrg = query({
+  args: { orgId: v.string() },
+  handler: async (ctx, args) => {
+    const projects = await ctx.db
+      .query("projects")
+      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+      .collect();
+    return projects.map(mapProject);
+  },
+});
+
 function mapProject(p: any) {
   return {
     id: p.projectId,
     name: p.name,
     repository_url: p.repositoryUrl,
     description: p.description,
+    org_id: p.orgId ?? null,
     team_id: p.teamId ?? null,
     created_at: p.createdAt,
   };

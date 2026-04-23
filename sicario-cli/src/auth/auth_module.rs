@@ -250,7 +250,7 @@ impl AuthModule {
     /// The resulting token is stored as a cloud API token in the OS credential store.
     pub fn cloud_login(&self) -> Result<()> {
         let cloud_auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-            .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+            .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
         let cloud_client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
             .unwrap_or_else(|_| "sicario-cli".to_string());
 
@@ -358,7 +358,7 @@ impl AuthModule {
     /// Calls `GET /api/v1/whoami` on the Sicario Cloud API.
     pub fn cloud_whoami(&self) -> Result<super::CloudUserInfo> {
         let cloud_url = std::env::var("SICARIO_CLOUD_URL")
-            .unwrap_or_else(|_| "https://api.sicario.dev".to_string());
+            .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
         let token = self
             .token_store

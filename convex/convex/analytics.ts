@@ -117,3 +117,173 @@ export const mttr = query({
     };
   },
 });
+
+export const topVulnerableProjects = query({
+  args: {},
+  handler: async (ctx) => {
+    const projects = await ctx.db.query("projects").collect();
+    const scans = await ctx.db.query("scans").collect();
+    const findings = await ctx.db.query("findings").collect();
+
+    // Build scanId → projectId map
+    const scanToProject: Record<string, string> = {};
+    for (const scan of scans) {
+      if (scan.projectId) {
+        scanToProject[scan.scanId] = scan.projectId;
+      }
+    }
+
+    // Group open findings by projectId
+    const openStates = new Set(["Open", "Reviewing", "ToFix"]);
+    const projectStats: Record<
+      string,
+      { openCount: number; criticalCount: number; highCount: number; mediumCount: number; lowCount: number }
+    > = {};
+
+    for (const f of findings) {
+      const projectId = scanToProject[f.scanId];
+      if (!projectId) continue;
+      if (!openStates.has(f.triageState)) continue;
+
+      if (!projectStats[projectId]) {
+        projectStats[projectId] = { openCount: 0, criticalCount: 0, highCount: 0, mediumCount: 0, lowCount: 0 };
+      }
+      projectStats[projectId].openCount++;
+      switch (f.severity) {
+        case "Critical": projectStats[projectId].criticalCount++; break;
+        case "High": projectStats[projectId].highCount++; break;
+        case "Medium": projectStats[projectId].mediumCount++; break;
+        case "Low": projectStats[projectId].lowCount++; break;
+      }
+    }
+
+    // Build project lookup
+    const projectMap: Record<string, { name: string; repositoryUrl: string }> = {};
+    for (const p of projects) {
+      projectMap[p.projectId] = { name: p.name, repositoryUrl: p.repositoryUrl };
+    }
+
+    // Build result, sort by openCount desc, limit to 10
+    const results = Object.entries(projectStats)
+      .map(([projectId, stats]) => ({
+        projectId,
+        name: projectMap[projectId]?.name ?? "Unknown",
+        repositoryUrl: projectMap[projectId]?.repositoryUrl ?? "",
+        ...stats,
+      }))
+      .sort((a, b) => b.openCount - a.openCount)
+      .slice(0, 10);
+
+    return results;
+  },
+});
+
+export const owaspCompliance = query({
+  args: {},
+  handler: async (ctx) => {
+    const findings = await ctx.db.query("findings").collect();
+
+    const resolvedStates = new Set(["Fixed", "Ignored", "AutoIgnored"]);
+    const openStates = new Set(["Open", "Reviewing", "ToFix"]);
+
+    const categories: Record<
+      string,
+      {
+        total: number;
+        resolved: number;
+        open: number;
+        severityBreakdown: { critical: number; high: number; medium: number; low: number; info: number };
+      }
+    > = {};
+
+    for (const f of findings) {
+      if (!f.owaspCategory) continue;
+
+      const cat = f.owaspCategory;
+      if (!categories[cat]) {
+        categories[cat] = {
+          total: 0,
+          resolved: 0,
+          open: 0,
+          severityBreakdown: { critical: 0, high: 0, medium: 0, low: 0, info: 0 },
+        };
+      }
+
+      categories[cat].total++;
+      if (resolvedStates.has(f.triageState)) {
+        categories[cat].resolved++;
+      }
+      if (openStates.has(f.triageState)) {
+        categories[cat].open++;
+      }
+
+      switch (f.severity) {
+        case "Critical": categories[cat].severityBreakdown.critical++; break;
+        case "High": categories[cat].severityBreakdown.high++; break;
+        case "Medium": categories[cat].severityBreakdown.medium++; break;
+        case "Low": categories[cat].severityBreakdown.low++; break;
+        case "Info": categories[cat].severityBreakdown.info++; break;
+      }
+    }
+
+    return Object.entries(categories)
+      .map(([category, data]) => {
+        const complianceScore =
+          data.total > 0
+            ? Math.round((data.resolved / data.total) * 1000) / 10
+            : 100;
+        const status =
+          complianceScore >= 80 ? "pass" : complianceScore >= 50 ? "warning" : "fail";
+        return {
+          category,
+          total: data.total,
+          resolved: data.resolved,
+          open: data.open,
+          severityBreakdown: data.severityBreakdown,
+          complianceScore,
+          status,
+        };
+      })
+      .sort((a, b) => a.category.localeCompare(b.category));
+  },
+});
+
+export const findingsByLanguage = query({
+  args: {},
+  handler: async (ctx) => {
+    const scans = await ctx.db.query("scans").collect();
+    const findings = await ctx.db.query("findings").collect();
+
+    // Group findings by scanId
+    const findingsByScan: Record<string, number> = {};
+    for (const f of findings) {
+      findingsByScan[f.scanId] = (findingsByScan[f.scanId] ?? 0) + 1;
+    }
+
+    // For each language, sum finding counts from scans that include that language
+    const languageStats: Record<string, { findingCount: number; scanCount: number }> = {};
+
+    for (const scan of scans) {
+      const breakdown = scan.languageBreakdown as Record<string, number> | null;
+      if (!breakdown) continue;
+
+      const scanFindingCount = findingsByScan[scan.scanId] ?? 0;
+
+      for (const language of Object.keys(breakdown)) {
+        if (!languageStats[language]) {
+          languageStats[language] = { findingCount: 0, scanCount: 0 };
+        }
+        languageStats[language].findingCount += scanFindingCount;
+        languageStats[language].scanCount++;
+      }
+    }
+
+    return Object.entries(languageStats)
+      .map(([language, stats]) => ({
+        language,
+        findingCount: stats.findingCount,
+        scanCount: stats.scanCount,
+      }))
+      .sort((a, b) => b.findingCount - a.findingCount);
+  },
+});

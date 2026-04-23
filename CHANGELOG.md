@@ -49,7 +49,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - OAuth 2.0 device flow authentication with PKCE
 - MCP (Model Context Protocol) server for AI assistant integration
 - Cloud priority scoring with internet exposure analysis
-- Sicario Cloud platform: Convex backend, Axum REST API, Next.js dashboard
+- Sicario Cloud platform: Convex backend, Axum REST API, React dashboard
 - Cloud publish command for uploading scan results
 - GitHub Action for CI integration (`action.yml`)
 - `.sicarioignore` file support (`.gitignore` syntax)

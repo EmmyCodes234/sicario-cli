@@ -1,9 +1,9 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
-import { requireRole } from "./rbac";
+import { requireRole, getUserMembership } from "./rbac";
 
 /**
- * Get SSO configuration for an organization. Admin only.
+ * Get SSO configuration for an organization. Returns null if user has no access.
  */
 export const getConfig = query({
   args: {
@@ -11,7 +11,10 @@ export const getConfig = query({
     userId: v.string(),
   },
   handler: async (ctx, args) => {
-    await requireRole(ctx, args.userId, args.orgId, "admin");
+    // Gracefully return null if user has no membership (e.g. dev/demo mode)
+    const membership = await getUserMembership(ctx, args.userId, args.orgId);
+    if (!membership) return null;
+
     const config = await ctx.db
       .query("ssoConfigs")
       .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))

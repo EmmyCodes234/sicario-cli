@@ -144,6 +144,14 @@ pub struct ScanArgs {
     /// Publish results to Sicario Cloud after scanning
     #[arg(long)]
     pub publish: bool,
+
+    /// Disable automatic cloud exposure analysis (K8s manifest detection)
+    #[arg(long)]
+    pub no_cloud: bool,
+
+    /// Organization ID to publish scan results under (used with --publish)
+    #[arg(long)]
+    pub org: Option<String>,
 }
 
 impl Default for ScanArgs {
@@ -176,6 +184,8 @@ impl Default for ScanArgs {
             no_cache_write: false,
             auto_suppress: false,
             publish: false,
+            no_cloud: false,
+            org: None,
         }
     }
 }

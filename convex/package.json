@@ -7,6 +7,8 @@
     "deploy": "npx convex deploy"
   },
   "dependencies": {
+    "@auth/core": "^0.37.0",
+    "@convex-dev/auth": "^0.0.91",
     "convex": "^1.17.0"
   }
 }

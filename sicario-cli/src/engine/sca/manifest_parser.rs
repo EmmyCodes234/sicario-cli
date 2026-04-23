@@ -54,14 +54,33 @@ impl ManifestParser {
             } else if path.is_file() {
                 let file_name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
                 match file_name {
+                    // Prefer lockfiles over manifests for exact versions
+                    "package-lock.json" => {
+                        if let Ok(mut d) = parse_package_lock_json(&path) {
+                            deps.append(&mut d);
+                        }
+                    }
                     "package.json" => {
-                        if let Ok(mut d) = parse_package_json(&path) {
+                        // Only parse package.json if no lockfile was found in same dir
+                        let lockfile = path.parent().map(|p| p.join("package-lock.json"));
+                        if lockfile.map_or(true, |lf| !lf.exists()) {
+                            if let Ok(mut d) = parse_package_json(&path) {
+                                deps.append(&mut d);
+                            }
+                        }
+                    }
+                    "Cargo.lock" => {
+                        if let Ok(mut d) = parse_cargo_lock(&path) {
                             deps.append(&mut d);
                         }
                     }
                     "Cargo.toml" => {
-                        if let Ok(mut d) = parse_cargo_toml(&path) {
-                            deps.append(&mut d);
+                        // Only parse Cargo.toml if no lockfile was found in same dir
+                        let lockfile = path.parent().map(|p| p.join("Cargo.lock"));
+                        if lockfile.map_or(true, |lf| !lf.exists()) {
+                            if let Ok(mut d) = parse_cargo_toml(&path) {
+                                deps.append(&mut d);
+                            }
                         }
                     }
                     "requirements.txt" => {
@@ -292,6 +311,124 @@ fn extract_requirements_version(spec: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
+// package-lock.json parser
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct PackageLockJson {
+    #[serde(default)]
+    dependencies: HashMap<String, PackageLockDep>,
+    #[serde(default)]
+    packages: HashMap<String, PackageLockPackage>,
+    #[serde(rename = "lockfileVersion", default)]
+    lockfile_version: Option<u32>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageLockDep {
+    version: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageLockPackage {
+    version: Option<String>,
+}
+
+/// Parse `package-lock.json` and return npm dependencies with exact resolved versions.
+pub fn parse_package_lock_json(path: &Path) -> Result<Vec<Dependency>> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("Failed to read {:?}", path))?;
+
+    let lock: PackageLockJson = serde_json::from_str(&content)
+        .with_context(|| format!("Failed to parse package-lock.json at {:?}", path))?;
+
+    let mut deps = Vec::new();
+
+    // lockfileVersion >= 2 uses "packages" with "node_modules/..." keys
+    if lock.lockfile_version.unwrap_or(1) >= 2 {
+        for (key, pkg) in &lock.packages {
+            // Skip the root package (empty key)
+            if key.is_empty() {
+                continue;
+            }
+            // Extract package name from "node_modules/<name>" or nested paths
+            let name = key
+                .rsplit("node_modules/")
+                .next()
+                .unwrap_or(key)
+                .to_string();
+            if name.is_empty() {
+                continue;
+            }
+            if let Some(ref version) = pkg.version {
+                deps.push(Dependency {
+                    ecosystem: "npm".to_string(),
+                    package_name: name,
+                    version: version.clone(),
+                });
+            }
+        }
+    }
+
+    // lockfileVersion 1 (or fallback) uses "dependencies"
+    if deps.is_empty() {
+        for (name, dep) in &lock.dependencies {
+            if let Some(ref version) = dep.version {
+                deps.push(Dependency {
+                    ecosystem: "npm".to_string(),
+                    package_name: name.clone(),
+                    version: version.clone(),
+                });
+            }
+        }
+    }
+
+    Ok(deps)
+}
+
+// ---------------------------------------------------------------------------
+// Cargo.lock parser
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, Deserialize)]
+struct CargoLock {
+    #[serde(default)]
+    package: Vec<CargoLockPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoLockPackage {
+    name: String,
+    version: String,
+    #[serde(default)]
+    source: Option<String>,
+}
+
+/// Parse `Cargo.lock` and return crates.io dependencies with exact resolved versions.
+pub fn parse_cargo_lock(path: &Path) -> Result<Vec<Dependency>> {
+    let content =
+        std::fs::read_to_string(path).with_context(|| format!("Failed to read {:?}", path))?;
+
+    let lock: CargoLock = toml::from_str(&content)
+        .with_context(|| format!("Failed to parse Cargo.lock at {:?}", path))?;
+
+    let mut deps = Vec::new();
+
+    for pkg in &lock.package {
+        // Only include packages from crates.io (have a source) — skip local path deps
+        if pkg.source.is_some() {
+            deps.push(Dependency {
+                ecosystem: "crates.io".to_string(),
+                package_name: pkg.name.clone(),
+                version: pkg.version.clone(),
+            });
+        }
+    }
+
+    Ok(deps)
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
 
@@ -481,5 +618,102 @@ proptest = "1.4"
 
         let deps = ManifestParser::parse_directory(dir.path()).unwrap();
         assert!(!deps.iter().any(|d| d.package_name == "evil-pkg"));
+    }
+
+    // ── package-lock.json ────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_package_lock_json_v1() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "package-lock.json",
+            r#"{
+                "lockfileVersion": 1,
+                "dependencies": {
+                    "lodash": {"version": "4.17.20"},
+                    "express": {"version": "4.18.2"}
+                }
+            }"#,
+        );
+        let deps = parse_package_lock_json(&dir.path().join("package-lock.json")).unwrap();
+        assert_eq!(deps.len(), 2);
+        assert!(deps.iter().any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
+        assert!(deps.iter().any(|d| d.package_name == "express" && d.version == "4.18.2"));
+    }
+
+    #[test]
+    fn test_parse_package_lock_json_v2() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "package-lock.json",
+            r#"{
+                "lockfileVersion": 2,
+                "packages": {
+                    "": {"name": "my-app", "version": "1.0.0"},
+                    "node_modules/lodash": {"version": "4.17.20"},
+                    "node_modules/express": {"version": "4.18.2"}
+                }
+            }"#,
+        );
+        let deps = parse_package_lock_json(&dir.path().join("package-lock.json")).unwrap();
+        assert_eq!(deps.len(), 2);
+        assert!(deps.iter().any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
+        assert!(deps.iter().any(|d| d.package_name == "express" && d.version == "4.18.2"));
+    }
+
+    // ── Cargo.lock ───────────────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_cargo_lock() {
+        let dir = TempDir::new().unwrap();
+        write(
+            dir.path(),
+            "Cargo.lock",
+            r#"
+[[package]]
+name = "serde"
+version = "1.0.193"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+
+[[package]]
+name = "my-local-crate"
+version = "0.1.0"
+"#,
+        );
+        let deps = parse_cargo_lock(&dir.path().join("Cargo.lock")).unwrap();
+        // Only crates.io packages (with source) should be included
+        assert_eq!(deps.len(), 1);
+        assert!(deps.iter().any(|d| d.package_name == "serde" && d.version == "1.0.193"));
+        assert!(!deps.iter().any(|d| d.package_name == "my-local-crate"));
+    }
+
+    // ── Lockfile preference ──────────────────────────────────────────────
+
+    #[test]
+    fn test_parse_directory_prefers_lockfile_over_manifest() {
+        let dir = TempDir::new().unwrap();
+        // Write both package.json and package-lock.json
+        write(
+            dir.path(),
+            "package.json",
+            r#"{"dependencies":{"lodash":"^4.17.0"}}"#,
+        );
+        write(
+            dir.path(),
+            "package-lock.json",
+            r#"{
+                "lockfileVersion": 1,
+                "dependencies": {
+                    "lodash": {"version": "4.17.20"}
+                }
+            }"#,
+        );
+        let deps = ManifestParser::parse_directory(dir.path()).unwrap();
+        // Should use lockfile version (exact), not manifest version (range-stripped)
+        let lodash_deps: Vec<_> = deps.iter().filter(|d| d.package_name == "lodash").collect();
+        assert_eq!(lodash_deps.len(), 1);
+        assert_eq!(lodash_deps[0].version, "4.17.20");
     }
 }

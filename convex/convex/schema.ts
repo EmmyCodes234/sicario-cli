@@ -1,7 +1,10 @@
 import { defineSchema, defineTable } from "convex/server";
+import { authTables } from "@convex-dev/auth/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  ...authTables,
+
   organizations: defineTable({
     orgId: v.string(),
     name: v.string(),
@@ -22,11 +25,13 @@ export default defineSchema({
     name: v.string(),
     repositoryUrl: v.string(),
     description: v.string(),
+    orgId: v.string(),
     teamId: v.optional(v.string()),
     createdAt: v.string(),
   })
     .index("by_projectId", ["projectId"])
-    .index("by_teamId", ["teamId"]),
+    .index("by_teamId", ["teamId"])
+    .index("by_orgId", ["orgId"]),
 
   scans: defineTable({
     scanId: v.string(),
@@ -39,12 +44,14 @@ export default defineSchema({
     filesScanned: v.number(),
     languageBreakdown: v.any(),
     tags: v.array(v.string()),
+    orgId: v.optional(v.string()),
     projectId: v.optional(v.string()),
     createdAt: v.string(),
   })
     .index("by_scanId", ["scanId"])
     .index("by_repository", ["repository"])
-    .index("by_timestamp", ["timestamp"]),
+    .index("by_timestamp", ["timestamp"])
+    .index("by_orgId", ["orgId"]),
 
   findings: defineTable({
     findingId: v.string(),
@@ -67,6 +74,9 @@ export default defineSchema({
     triageState: v.string(),
     triageNote: v.optional(v.string()),
     assignedTo: v.optional(v.string()),
+
+    orgId: v.optional(v.string()),
+    projectId: v.optional(v.string()),
     createdAt: v.string(),
     updatedAt: v.string(),
   })
@@ -122,4 +132,34 @@ export default defineSchema({
     enabled: v.boolean(),
     createdAt: v.string(),
   }).index("by_orgId", ["orgId"]),
+
+  deviceCodes: defineTable({
+    deviceCode: v.string(),
+    userCode: v.string(),
+    codeChallenge: v.string(),
+    codeChallengeMethod: v.string(),
+    clientId: v.string(),
+    scope: v.optional(v.string()),
+    userId: v.optional(v.string()),
+    status: v.string(), // "pending" | "approved" | "denied" | "expired"
+    expiresAt: v.number(),
+    accessToken: v.optional(v.string()),
+    createdAt: v.string(),
+  })
+    .index("by_deviceCode", ["deviceCode"])
+    .index("by_userCode", ["userCode"]),
+
+  userProfiles: defineTable({
+    userId: v.string(),
+    onboardingCompleted: v.boolean(),
+    onboardingCompletedAt: v.optional(v.string()),
+    onboardingSkipped: v.boolean(),
+    role: v.optional(v.string()),
+    teamSize: v.optional(v.string()),
+    languages: v.array(v.string()),
+    cicdPlatform: v.optional(v.string()),
+    goals: v.array(v.string()),
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  }).index("by_userId", ["userId"]),
 });

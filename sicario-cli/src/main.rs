@@ -117,7 +117,7 @@ fn dispatch(cmd: Command) -> Result<ExitCode> {
         }
         Command::Login => cmd_cloud_login(),
         Command::Logout => cmd_cloud_logout(),
-        Command::Publish => cmd_cloud_publish(),
+        Command::Publish(args) => cmd_cloud_publish(args.org),
         Command::Whoami => cmd_cloud_whoami(),
         Command::Tui(args) => {
             let scan_dir = PathBuf::from(&args.dir);
@@ -180,8 +180,155 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     let files_scanned = files_to_scan.len();
     let total_rules = eng.get_rules().len();
 
-    let vulns = eng.scan_directory(&dir)?;
+    let mut vulns = eng.scan_directory(&dir)?;
     let scan_duration = scan_start.elapsed();
+
+    // Cloud exposure analysis: auto-detect K8s manifests and adjust priorities
+    if !args.no_cloud {
+        use cloud::exposure::CloudExposureAnalyzer;
+        use cloud::priority::assign_cloud_priority;
+
+        let mut analyzer = CloudExposureAnalyzer::new();
+        let mut k8s_found = false;
+
+        // Search for K8s manifest directories
+        let k8s_dirs = ["k8s", "kubernetes", "deploy", "manifests", ".k8s"];
+        for k8s_dir in &k8s_dirs {
+            let candidate = dir.join(k8s_dir);
+            if candidate.is_dir() {
+                if analyzer.load_kubernetes_configs(&candidate).is_ok() {
+                    k8s_found = true;
+                }
+            }
+        }
+
+        // Also scan the project root for YAML files with K8s manifests
+        if !k8s_found {
+            // Check if any YAML files in the root look like K8s manifests
+            if analyzer.load_kubernetes_configs(&dir).is_ok() {
+                k8s_found = true;
+            }
+        }
+
+        // Check for CSPM data directories
+        let cspm_dirs = ["cspm", ".cspm", "cloud-security"];
+        for cspm_dir in &cspm_dirs {
+            let candidate = dir.join(cspm_dir);
+            if candidate.is_dir() {
+                let _ = analyzer.load_cspm_findings(&candidate);
+            }
+        }
+
+        if k8s_found {
+            assign_cloud_priority(&mut vulns, &analyzer);
+        }
+    }
+
+    // ── SCA: dependency vulnerability scanning ────────────────────────────
+    {
+        use engine::sca::manifest_parser::ManifestParser;
+        use engine::sca::VulnerabilityDatabaseManager;
+
+        let cache_dir = dir.join(".sicario").join("cache");
+        match VulnerabilityDatabaseManager::new(&cache_dir) {
+            Ok(vuln_db) => {
+                // Parse lockfiles/manifests to find all dependencies
+                let deps = ManifestParser::parse_directory(&dir).unwrap_or_default();
+
+                if !deps.is_empty() {
+                    // Build tuples for the OSV query
+                    let dep_tuples: Vec<(String, String, String)> = deps
+                        .iter()
+                        .filter(|d| !d.version.is_empty())
+                        .map(|d| {
+                            (
+                                d.ecosystem.clone(),
+                                d.package_name.clone(),
+                                d.version.clone(),
+                            )
+                        })
+                        .collect();
+
+                    // Refresh cache if empty or stale (>24h)
+                    if let Ok(true) = vuln_db.is_stale() {
+                        if !args.quiet {
+                            eprintln!("sicario: refreshing SCA vulnerability cache from OSV.dev...");
+                        }
+                        match vuln_db.refresh_if_stale(&dep_tuples) {
+                            Ok(count) => {
+                                if !args.quiet && count > 0 {
+                                    eprintln!(
+                                        "sicario: cached {} vulnerability records",
+                                        count
+                                    );
+                                }
+                            }
+                            Err(e) => {
+                                tracing::warn!("SCA cache refresh failed: {}", e);
+                                if !args.quiet {
+                                    eprintln!("warning: SCA cache refresh failed: {e}");
+                                }
+                            }
+                        }
+                    }
+
+                    // Query local cache for each dependency
+                    for dep in &deps {
+                        if dep.version.is_empty() {
+                            continue;
+                        }
+                        match vuln_db.query_package(&dep.ecosystem, &dep.package_name, &dep.version)
+                        {
+                            Ok(known_vulns) => {
+                                for kv in known_vulns {
+                                    let rule_id = format!(
+                                        "sca/{}",
+                                        kv.cve_id
+                                            .as_deref()
+                                            .or(kv.ghsa_id.as_deref())
+                                            .unwrap_or("unknown")
+                                    );
+                                    let snippet = format!(
+                                        "{}@{} — {}",
+                                        dep.package_name, dep.version, kv.summary
+                                    );
+                                    let mut sca_vuln = engine::vulnerability::Vulnerability::new(
+                                        rule_id,
+                                        PathBuf::from(format!(
+                                            "<{}/{}>",
+                                            dep.ecosystem, dep.package_name
+                                        )),
+                                        0,
+                                        0,
+                                        snippet,
+                                        kv.severity,
+                                    );
+                                    sca_vuln.owasp_category =
+                                        Some(engine::vulnerability::OwaspCategory::A06_VulnerableComponents);
+                                    sca_vuln.cwe_id = kv.cve_id.clone();
+                                    vulns.push(sca_vuln);
+                                }
+                            }
+                            Err(e) => {
+                                tracing::debug!(
+                                    "SCA query failed for {}/{}: {}",
+                                    dep.ecosystem,
+                                    dep.package_name,
+                                    e
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                tracing::warn!("Failed to initialize SCA database: {}", e);
+                if !args.quiet {
+                    eprintln!("warning: SCA scanning unavailable: {e}");
+                }
+            }
+        }
+    }
 
     // Emit primary output in the requested format
     let mut stdout = std::io::stdout();
@@ -248,7 +395,8 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 
     // Auto-publish to Sicario Cloud if --publish flag is set
     if args.publish {
-        publish_scan_results(&vulns, scan_duration, rules_loaded);
+        let language_breakdown = build_language_breakdown(&files_to_scan);
+        publish_scan_results(&vulns, scan_duration, rules_loaded, files_scanned, language_breakdown, args.org);
     }
 
     // Compute exit code
@@ -274,6 +422,9 @@ fn publish_scan_results(
     vulns: &[engine::vulnerability::Vulnerability],
     scan_duration: std::time::Duration,
     rules_loaded: usize,
+    files_scanned: usize,
+    language_breakdown: std::collections::HashMap<String, usize>,
+    org_id: Option<String>,
 ) {
     use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
 
@@ -281,7 +432,7 @@ fn publish_scan_results(
     let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
         .unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
     let auth_module = match auth::auth_module::AuthModule::new(client_id, auth_url) {
         Ok(m) => m,
@@ -313,8 +464,8 @@ fn publish_scan_results(
         timestamp: chrono::Utc::now(),
         duration_ms: scan_duration.as_millis() as u64,
         rules_loaded,
-        files_scanned: 0,
-        language_breakdown: std::collections::HashMap::new(),
+        files_scanned,
+        language_breakdown,
         tags: Vec::new(),
     };
 
@@ -322,7 +473,7 @@ fn publish_scan_results(
     let cloud_url = resolve_cloud_url();
 
     let client = match PublishClient::new(cloud_url, token) {
-        Ok(c) => c,
+        Ok(c) => c.with_org(org_id),
         Err(e) => {
             eprintln!("warning: --publish skipped ({e})");
             return;
@@ -340,6 +491,23 @@ fn publish_scan_results(
             eprintln!("warning: --publish failed: {e}");
         }
     }
+}
+
+/// Build a language breakdown HashMap from file extensions.
+///
+/// Maps file extension (lowercased, e.g. "rs", "js", "py") to the count of files
+/// with that extension. Files without an extension are counted under "other".
+fn build_language_breakdown(files: &[PathBuf]) -> std::collections::HashMap<String, usize> {
+    let mut breakdown = std::collections::HashMap::new();
+    for file in files {
+        let ext = file
+            .extension()
+            .and_then(|e| e.to_str())
+            .map(|e| e.to_lowercase())
+            .unwrap_or_else(|| "other".to_string());
+        *breakdown.entry(ext).or_insert(0) += 1;
+    }
+    breakdown
 }
 
 // ─── Suppressions command ──────────────────────────────────────────────────────
@@ -430,7 +598,7 @@ fn cmd_cloud_login() -> Result<ExitCode> {
     let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
         .unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
     let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
     auth_module.cloud_login()?;
@@ -441,7 +609,7 @@ fn cmd_cloud_logout() -> Result<ExitCode> {
     let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
         .unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
     let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
     auth_module.cloud_logout()?;
@@ -453,7 +621,7 @@ fn cmd_cloud_whoami() -> Result<ExitCode> {
     let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
         .unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
     let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
     match auth_module.cloud_whoami() {
@@ -471,14 +639,14 @@ fn cmd_cloud_whoami() -> Result<ExitCode> {
     }
 }
 
-fn cmd_cloud_publish() -> Result<ExitCode> {
+fn cmd_cloud_publish(org_id: Option<String>) -> Result<ExitCode> {
     use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
 
     // Check authentication
     let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
         .unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
-        .unwrap_or_else(|_| "https://auth.sicario.dev".to_string());
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
     let auth_module = auth::auth_module::AuthModule::new(client_id, auth_url)?;
     let token = match auth_module.get_cloud_token() {
@@ -502,6 +670,12 @@ fn cmd_cloud_publish() -> Result<ExitCode> {
         }
     }
 
+    // Collect files to get accurate count and language breakdown
+    let mut files_to_scan = Vec::new();
+    eng.collect_files_recursive(&dir, &mut files_to_scan)?;
+    let files_scanned = files_to_scan.len();
+    let language_breakdown = build_language_breakdown(&files_to_scan);
+
     let vulns = eng.scan_directory(&dir)?;
     let scan_duration = scan_start.elapsed();
 
@@ -519,14 +693,14 @@ fn cmd_cloud_publish() -> Result<ExitCode> {
         timestamp: chrono::Utc::now(),
         duration_ms: scan_duration.as_millis() as u64,
         rules_loaded,
-        files_scanned: 0,
-        language_breakdown: std::collections::HashMap::new(),
+        files_scanned,
+        language_breakdown,
         tags: Vec::new(),
     };
 
     let report = ScanReport { findings, metadata };
     let cloud_url = resolve_cloud_url();
-    let client = PublishClient::new(cloud_url, token)?;
+    let client = PublishClient::new(cloud_url, token)?.with_org(org_id);
 
     match client.publish(&report) {
         Ok(resp) => {

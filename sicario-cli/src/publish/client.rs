@@ -32,10 +32,10 @@ pub struct ScanReport {
 
 /// Resolve the Sicario Cloud API base URL.
 ///
-/// Checks `SICARIO_CLOUD_URL` env var, defaults to `https://api.sicario.dev`.
+/// Checks `SICARIO_CLOUD_URL` env var, defaults to `https://flexible-terrier-680.convex.site`.
 pub fn resolve_cloud_url() -> String {
     std::env::var("SICARIO_CLOUD_URL")
-        .unwrap_or_else(|_| "https://api.sicario.dev".to_string())
+        .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string())
 }
 
 /// Client for publishing scan results to the Sicario Cloud API.
@@ -43,6 +43,7 @@ pub struct PublishClient {
     cloud_url: String,
     auth_token: String,
     http: reqwest::blocking::Client,
+    org_id: Option<String>,
 }
 
 impl PublishClient {
@@ -55,7 +56,14 @@ impl PublishClient {
             cloud_url,
             auth_token,
             http,
+            org_id: None,
         })
+    }
+
+    /// Set the organization ID to include as `X-Sicario-Org` header on requests.
+    pub fn with_org(mut self, org_id: Option<String>) -> Self {
+        self.org_id = org_id;
+        self
     }
 
     /// Upload a scan report to the Cloud API.
@@ -64,13 +72,17 @@ impl PublishClient {
     pub fn publish(&self, report: &ScanReport) -> Result<PublishResponse> {
         let url = format!("{}/api/v1/scans", self.cloud_url.trim_end_matches('/'));
 
-        let resp = self
+        let mut request = self
             .http
             .post(&url)
             .header("Authorization", format!("Bearer {}", self.auth_token))
-            .header("Content-Type", "application/json")
-            .json(report)
-            .send();
+            .header("Content-Type", "application/json");
+
+        if let Some(ref org) = self.org_id {
+            request = request.header("X-Sicario-Org", org.as_str());
+        }
+
+        let resp = request.json(report).send();
 
         let resp = match resp {
             Ok(r) => r,

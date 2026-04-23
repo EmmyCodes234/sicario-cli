@@ -56,7 +56,7 @@ pub enum Command {
     /// Log out of Sicario Cloud
     Logout,
     /// Publish scan results to Sicario Cloud
-    Publish,
+    Publish(PublishArgs),
     /// Show current authenticated user
     Whoami,
     /// Launch the interactive TUI
@@ -103,4 +103,12 @@ pub struct TuiArgs {
     /// Directory to scan
     #[arg(long, default_value = ".")]
     pub dir: String,
+}
+
+/// Arguments for the `publish` subcommand.
+#[derive(Parser, Debug)]
+pub struct PublishArgs {
+    /// Organization ID to publish scan results under
+    #[arg(long)]
+    pub org: Option<String>,
 }

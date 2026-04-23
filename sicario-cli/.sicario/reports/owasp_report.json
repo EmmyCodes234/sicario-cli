@@ -1,6 +1,6 @@
 {
-  "total_vulnerabilities": 1403,
-  "categories_affected": 6,
+  "total_vulnerabilities": 629,
+  "categories_affected": 4,
   "categories": [
     {
       "category": "A01_BrokenAccessControl",
@@ -15,19 +15,19 @@
     {
       "category": "A02_CryptographicFailures",
       "label": "A02:2021 – Cryptographic Failures",
-      "total": 75,
+      "total": 5,
       "critical": 0,
-      "high": 72,
-      "medium": 3,
+      "high": 4,
+      "medium": 1,
       "low": 0,
       "info": 0
     },
     {
       "category": "A03_Injection",
       "label": "A03:2021 – Injection",
-      "total": 106,
-      "critical": 46,
-      "high": 60,
+      "total": 23,
+      "critical": 1,
+      "high": 22,
       "medium": 0,
       "low": 0,
       "info": 0
@@ -35,21 +35,21 @@
     {
       "category": "A04_InsecureDesign",
       "label": "A04:2021 – Insecure Design",
-      "total": 11,
+      "total": 0,
       "critical": 0,
       "high": 0,
-      "medium": 11,
+      "medium": 0,
       "low": 0,
       "info": 0
     },
     {
       "category": "A05_SecurityMisconfiguration",
       "label": "A05:2021 – Security Misconfiguration",
-      "total": 1174,
+      "total": 600,
       "critical": 0,
       "high": 0,
       "medium": 0,
-      "low": 1174,
+      "low": 600,
       "info": 0
     },
     {
@@ -75,8 +75,8 @@
     {
       "category": "A08_SoftwareDataIntegrityFailures",
       "label": "A08:2021 – Software and Data Integrity Failures",
-      "total": 33,
-      "critical": 33,
+      "total": 0,
+      "critical": 0,
       "high": 0,
       "medium": 0,
       "low": 0,
@@ -85,10 +85,10 @@
     {
       "category": "A09_SecurityLoggingFailures",
       "label": "A09:2021 – Security Logging and Monitoring Failures",
-      "total": 4,
+      "total": 1,
       "critical": 0,
       "high": 0,
-      "medium": 4,
+      "medium": 1,
       "low": 0,
       "info": 0
     },
