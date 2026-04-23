@@ -638,8 +638,12 @@ proptest = "1.4"
         );
         let deps = parse_package_lock_json(&dir.path().join("package-lock.json")).unwrap();
         assert_eq!(deps.len(), 2);
-        assert!(deps.iter().any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
-        assert!(deps.iter().any(|d| d.package_name == "express" && d.version == "4.18.2"));
+        assert!(deps
+            .iter()
+            .any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
+        assert!(deps
+            .iter()
+            .any(|d| d.package_name == "express" && d.version == "4.18.2"));
     }
 
     #[test]
@@ -659,8 +663,12 @@ proptest = "1.4"
         );
         let deps = parse_package_lock_json(&dir.path().join("package-lock.json")).unwrap();
         assert_eq!(deps.len(), 2);
-        assert!(deps.iter().any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
-        assert!(deps.iter().any(|d| d.package_name == "express" && d.version == "4.18.2"));
+        assert!(deps
+            .iter()
+            .any(|d| d.package_name == "lodash" && d.version == "4.17.20"));
+        assert!(deps
+            .iter()
+            .any(|d| d.package_name == "express" && d.version == "4.18.2"));
     }
 
     // ── Cargo.lock ───────────────────────────────────────────────────────
@@ -685,7 +693,9 @@ version = "0.1.0"
         let deps = parse_cargo_lock(&dir.path().join("Cargo.lock")).unwrap();
         // Only crates.io packages (with source) should be included
         assert_eq!(deps.len(), 1);
-        assert!(deps.iter().any(|d| d.package_name == "serde" && d.version == "1.0.193"));
+        assert!(deps
+            .iter()
+            .any(|d| d.package_name == "serde" && d.version == "1.0.193"));
         assert!(!deps.iter().any(|d| d.package_name == "my-local-crate"));
     }
 

@@ -363,8 +363,8 @@ impl SastEngine {
                 // Fast skip: check directory name before expensive glob matching
                 if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
                     match name {
-                        "node_modules" | ".git" | "target" | "dist" | "build"
-                        | "__pycache__" | ".venv" | "venv" | ".sicario" => continue,
+                        "node_modules" | ".git" | "target" | "dist" | "build" | "__pycache__"
+                        | ".venv" | "venv" | ".sicario" => continue,
                         _ => {}
                     }
                 }
@@ -445,13 +445,10 @@ impl SastEngine {
             // Process each match — take only the first (widest) capture per match
             for query_match in matches {
                 // Find the widest capture in this match (the one spanning the most text)
-                let best_capture = query_match
-                    .captures
-                    .iter()
-                    .max_by_key(|c| {
-                        let n = c.node;
-                        n.end_byte().saturating_sub(n.start_byte())
-                    });
+                let best_capture = query_match.captures.iter().max_by_key(|c| {
+                    let n = c.node;
+                    n.end_byte().saturating_sub(n.start_byte())
+                });
 
                 let capture = match best_capture {
                     Some(c) => c,

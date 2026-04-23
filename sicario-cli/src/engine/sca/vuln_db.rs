@@ -219,10 +219,7 @@ impl VulnerabilityDatabaseManager {
 
     /// Sync vulnerability data for a specific set of dependencies using
     /// per-package OSV.dev queries. Updates the last_synced_at timestamp.
-    pub fn sync_for_dependencies(
-        &self,
-        deps: &[(String, String, String)],
-    ) -> Result<usize> {
+    pub fn sync_for_dependencies(&self, deps: &[(String, String, String)]) -> Result<usize> {
         use super::osv_import::OsvImporter;
 
         let osv = OsvImporter::new(Arc::clone(&self.conn));
@@ -537,7 +534,10 @@ mod tests {
     fn test_is_stale_when_recently_synced() {
         let (db, _dir) = make_db();
         db.update_last_synced_at(Utc::now()).unwrap();
-        assert!(!db.is_stale().unwrap(), "Should not be stale when just synced");
+        assert!(
+            !db.is_stale().unwrap(),
+            "Should not be stale when just synced"
+        );
     }
 
     #[test]
@@ -545,6 +545,9 @@ mod tests {
         let (db, _dir) = make_db();
         let old = Utc::now() - chrono::Duration::hours(25);
         db.update_last_synced_at(old).unwrap();
-        assert!(db.is_stale().unwrap(), "Should be stale when synced >24h ago");
+        assert!(
+            db.is_stale().unwrap(),
+            "Should be stale when synced >24h ago"
+        );
     }
 }

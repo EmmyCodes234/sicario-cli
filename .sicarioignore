@@ -1,0 +1,2 @@
+# Exclude intentional vulnerability test samples from SAST scanning
+test-samples/

@@ -340,7 +340,11 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
     let lines: Vec<&str> = original.lines().collect();
 
     if target_line >= lines.len() {
-        return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+        return apply_comment_warning(
+            original,
+            vuln,
+            "SQL injection detected — use parameterized queries",
+        );
     }
 
     let vuln_line = lines[target_line];
@@ -348,7 +352,9 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
     let replacement = match lang.as_str() {
         "python" => {
             // Replace string concat/f-string in query with parameterized form
-            if vuln_line.contains('+') || vuln_line.contains("f\"") || vuln_line.contains("f'")
+            if vuln_line.contains('+')
+                || vuln_line.contains("f\"")
+                || vuln_line.contains("f'")
                 || vuln_line.contains('%')
             {
                 let indent = get_indent(vuln_line);
@@ -357,7 +363,11 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
                      {indent}cursor.execute(\"SELECT * FROM table WHERE col = %s\", (user_input,))",
                 )
             } else {
-                return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+                return apply_comment_warning(
+                    original,
+                    vuln,
+                    "SQL injection detected — use parameterized queries",
+                );
             }
         }
         "javascript" | "typescript" => {
@@ -368,7 +378,11 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
                      {indent}const result = await db.query(\"SELECT * FROM table WHERE col = $1\", [userInput]);",
                 )
             } else {
-                return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+                return apply_comment_warning(
+                    original,
+                    vuln,
+                    "SQL injection detected — use parameterized queries",
+                );
             }
         }
         "java" => {
@@ -380,18 +394,29 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
                      {indent}stmt.setString(1, userInput);",
                 )
             } else {
-                return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+                return apply_comment_warning(
+                    original,
+                    vuln,
+                    "SQL injection detected — use parameterized queries",
+                );
             }
         }
         "go" => {
-            if vuln_line.contains('+') || vuln_line.contains("Sprintf") || vuln_line.contains("fmt.") {
+            if vuln_line.contains('+')
+                || vuln_line.contains("Sprintf")
+                || vuln_line.contains("fmt.")
+            {
                 let indent = get_indent(vuln_line);
                 format!(
                     "{indent}// SICARIO FIX: Use parameterized query to prevent SQL injection\n\
                      {indent}rows, err := db.Query(\"SELECT * FROM table WHERE col = $1\", userInput)",
                 )
             } else {
-                return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+                return apply_comment_warning(
+                    original,
+                    vuln,
+                    "SQL injection detected — use parameterized queries",
+                );
             }
         }
         "rust" => {
@@ -402,11 +427,19 @@ fn apply_sql_injection_template(original: &str, vuln: &Vulnerability) -> String 
                      {indent}sqlx::query(\"SELECT * FROM table WHERE col = $1\").bind(&user_input)",
                 )
             } else {
-                return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+                return apply_comment_warning(
+                    original,
+                    vuln,
+                    "SQL injection detected — use parameterized queries",
+                );
             }
         }
         _ => {
-            return apply_comment_warning(original, vuln, "SQL injection detected — use parameterized queries");
+            return apply_comment_warning(
+                original,
+                vuln,
+                "SQL injection detected — use parameterized queries",
+            );
         }
     };
 
@@ -485,7 +518,11 @@ fn apply_command_injection_template(original: &str, vuln: &Vulnerability) -> Str
     let lines: Vec<&str> = original.lines().collect();
 
     if target_line >= lines.len() {
-        return apply_comment_warning(original, vuln, "Command injection detected — use allowlist validation");
+        return apply_comment_warning(
+            original,
+            vuln,
+            "Command injection detected — use allowlist validation",
+        );
     }
 
     let vuln_line = lines[target_line];
@@ -554,7 +591,11 @@ fn apply_command_injection_template(original: &str, vuln: &Vulnerability) -> Str
             )
         }
         _ => {
-            return apply_comment_warning(original, vuln, "Command injection detected — use allowlist validation");
+            return apply_comment_warning(
+                original,
+                vuln,
+                "Command injection detected — use allowlist validation",
+            );
         }
     };
 
@@ -564,14 +605,14 @@ fn apply_command_injection_template(original: &str, vuln: &Vulnerability) -> Str
 /// For unknown vulnerability types, insert a warning comment rather than
 /// returning the original unchanged (Requirement 11.10).
 fn apply_unknown_template(original: &str, vuln: &Vulnerability) -> String {
-    let desc = vuln
-        .cwe_id
-        .as_deref()
-        .unwrap_or(&vuln.rule_id);
+    let desc = vuln.cwe_id.as_deref().unwrap_or(&vuln.rule_id);
     apply_comment_warning(
         original,
         vuln,
-        &format!("Security issue detected ({}) — manual review required", desc),
+        &format!(
+            "Security issue detected ({}) — manual review required",
+            desc
+        ),
     )
 }
 
@@ -611,9 +652,7 @@ fn format_comment(lang: &str, message: &str) -> String {
 
 /// Get the leading whitespace of a line.
 fn get_indent(line: &str) -> String {
-    line.chars()
-        .take_while(|c| c.is_whitespace())
-        .collect()
+    line.chars().take_while(|c| c.is_whitespace()).collect()
 }
 
 /// Replace a single line in the source with a (possibly multi-line) replacement.
@@ -646,8 +685,16 @@ pub fn display_diff_and_confirm_with_io(
     let diff = TextDiff::from_lines(&patch.original, &patch.fixed);
 
     writeln!(out, "\n{}", "Proposed fix:".bold())?;
-    writeln!(out, "{}", format!("--- {}", patch.file_path.display()).red())?;
-    writeln!(out, "{}", format!("+++ {}", patch.file_path.display()).green())?;
+    writeln!(
+        out,
+        "{}",
+        format!("--- {}", patch.file_path.display()).red()
+    )?;
+    writeln!(
+        out,
+        "{}",
+        format!("+++ {}", patch.file_path.display()).green()
+    )?;
 
     for group in diff.grouped_ops(3) {
         for op in &group {
@@ -1004,7 +1051,10 @@ mod tests {
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
-        assert_ne!(fixed, original, "SQL injection template must differ from original");
+        assert_ne!(
+            fixed, original,
+            "SQL injection template must differ from original"
+        );
         assert!(
             fixed.contains("parameterized") || fixed.contains("cursor.execute"),
             "Python SQL fix should use parameterized query"
@@ -1032,7 +1082,10 @@ mod tests {
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
-        assert_ne!(fixed, original, "SQL injection template must differ from original");
+        assert_ne!(
+            fixed, original,
+            "SQL injection template must differ from original"
+        );
         assert!(
             fixed.contains("parameterized") || fixed.contains("db.query"),
             "JS SQL fix should use parameterized query"
@@ -1088,7 +1141,10 @@ mod tests {
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
-        assert_ne!(fixed, original, "Command injection template must differ from original");
+        assert_ne!(
+            fixed, original,
+            "Command injection template must differ from original"
+        );
         assert!(
             fixed.contains("subprocess") || fixed.contains("ALLOWED"),
             "Python cmd injection fix should use subprocess with allowlist"
@@ -1116,7 +1172,10 @@ mod tests {
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
-        assert_ne!(fixed, original, "Unknown vuln template must differ from original");
+        assert_ne!(
+            fixed, original,
+            "Unknown vuln template must differ from original"
+        );
         assert!(
             fixed.contains("SICARIO WARNING"),
             "Unknown vuln fix should add a warning comment"
@@ -1150,7 +1209,10 @@ mod tests {
             cwe_id: Some("CWE-78".to_string()),
             ..vuln_sql.clone()
         };
-        assert_eq!(classify_vulnerability(&vuln_cmd), VulnType::CommandInjection);
+        assert_eq!(
+            classify_vulnerability(&vuln_cmd),
+            VulnType::CommandInjection
+        );
     }
 
     #[test]
@@ -1182,7 +1244,10 @@ mod tests {
             cwe_id: None,
             ..vuln.clone()
         };
-        assert_eq!(classify_vulnerability(&vuln_cmd), VulnType::CommandInjection);
+        assert_eq!(
+            classify_vulnerability(&vuln_cmd),
+            VulnType::CommandInjection
+        );
     }
 
     #[test]
@@ -1197,8 +1262,7 @@ mod tests {
 
         let mut output = Vec::new();
         let mut input = io::Cursor::new(b"y\n".to_vec());
-        let result =
-            display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
+        let result = display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
         assert!(result, "Should return true when user types 'y'");
     }
 
@@ -1214,8 +1278,7 @@ mod tests {
 
         let mut output = Vec::new();
         let mut input = io::Cursor::new(b"n\n".to_vec());
-        let result =
-            display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
+        let result = display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
         assert!(!result, "Should return false when user types 'n'");
     }
 
@@ -1231,8 +1294,7 @@ mod tests {
 
         let mut output = Vec::new();
         let mut input = io::Cursor::new(b"\n".to_vec());
-        let result =
-            display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
+        let result = display_diff_and_confirm_with_io(&patch, &mut output, &mut input).unwrap();
         assert!(!result, "Should return false on empty input (default N)");
     }
 

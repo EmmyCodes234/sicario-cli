@@ -29,11 +29,7 @@ pub fn render_diagnostics(
 }
 
 /// Render a single vulnerability as a diagnostic block.
-fn render_one(
-    vuln: &Vulnerability,
-    color: bool,
-    w: &mut dyn Write,
-) -> io::Result<()> {
+fn render_one(vuln: &Vulnerability, color: bool, w: &mut dyn Write) -> io::Result<()> {
     let sev_tag = severity_tag(vuln.severity);
     let cwe = vuln
         .cwe_id
@@ -42,7 +38,11 @@ fn render_one(
         .unwrap_or_default();
 
     // Header:  × [CRITICAL] rule-id (CWE-94)
-    let cross = if color { "×".red().bold().to_string() } else { "×".to_string() };
+    let cross = if color {
+        "×".red().bold().to_string()
+    } else {
+        "×".to_string()
+    };
     let header_label = format!("[{sev_tag}] {}{cwe}", vuln.rule_id);
     let header = if color {
         match vuln.severity {
@@ -58,15 +58,9 @@ fn render_one(
     writeln!(w, "  {cross} {header}")?;
 
     // Source location: ╭─[file:line:col]
-    let loc = format!(
-        "{}:{}:{}",
-        vuln.file_path.display(),
-        vuln.line,
-        vuln.column
-    );
+    let loc = format!("{}:{}:{}", vuln.file_path.display(), vuln.line, vuln.column);
     let top_border = if color {
-        format!("  {}",
-            format!("╭─[{loc}]").bright_black())
+        format!("  {}", format!("╭─[{loc}]").bright_black())
     } else {
         format!("  ╭─[{loc}]")
     };
@@ -153,7 +147,11 @@ fn read_source_context(path: &std::path::Path, finding_line: usize) -> Vec<Conte
     let lines: Vec<&str> = content.lines().collect();
     let mut result = Vec::new();
 
-    let start = if finding_line > 1 { finding_line - 1 } else { 1 };
+    let start = if finding_line > 1 {
+        finding_line - 1
+    } else {
+        1
+    };
     let end = (finding_line + 1).min(lines.len());
 
     for ln in start..=end {
@@ -250,13 +248,15 @@ fn help_for_rule(rule_id: &str) -> String {
         return "Replace eval() with a safe alternative like JSON.parse() or a sandboxed interpreter".to_string();
     }
     if r.contains("sql-injection") || r.contains("sqli") {
-        return "Use parameterized queries or prepared statements instead of string concatenation".to_string();
+        return "Use parameterized queries or prepared statements instead of string concatenation"
+            .to_string();
     }
     if r.contains("xss") {
         return "Sanitize or escape user input before inserting into HTML output".to_string();
     }
     if r.contains("command") || r.contains("exec") || r.contains("os-command") {
-        return "Avoid passing user input to shell commands; use safe APIs with argument lists".to_string();
+        return "Avoid passing user input to shell commands; use safe APIs with argument lists"
+            .to_string();
     }
     if r.contains("hardcoded") || r.contains("secret") || r.contains("password") {
         return "Move secrets to environment variables or a secrets manager".to_string();
@@ -271,7 +271,8 @@ fn help_for_rule(rule_id: &str) -> String {
         return "Use strong cryptographic algorithms (e.g., SHA-256, AES-256)".to_string();
     }
     if r.contains("redos") || r.contains("regex") {
-        return "Simplify the regex pattern or add input length limits to prevent ReDoS".to_string();
+        return "Simplify the regex pattern or add input length limits to prevent ReDoS"
+            .to_string();
     }
     if r.contains("nosql") {
         return "Validate and sanitize input before using in NoSQL queries".to_string();

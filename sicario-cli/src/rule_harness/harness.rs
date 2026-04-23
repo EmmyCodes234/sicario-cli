@@ -330,16 +330,10 @@ impl RuleQualityValidation for RuleTestHarness {
                         .filter(|c| c.expected == TestExpectation::TrueNegative)
                         .count();
                     if tp < 3 {
-                        rule_errors.push(format!(
-                            "Insufficient TP test cases: {} (minimum 3)",
-                            tp
-                        ));
+                        rule_errors.push(format!("Insufficient TP test cases: {} (minimum 3)", tp));
                     }
                     if tn < 3 {
-                        rule_errors.push(format!(
-                            "Insufficient TN test cases: {} (minimum 3)",
-                            tn
-                        ));
+                        rule_errors.push(format!("Insufficient TN test cases: {} (minimum 3)", tn));
                     }
                 }
             }
@@ -371,16 +365,46 @@ impl AggregateQualityReport {
         s.push_str("╔══════════════════════════════════════════╗\n");
         s.push_str("║       Rule Quality Report                ║\n");
         s.push_str("╠══════════════════════════════════════════╣\n");
-        s.push_str(&format!("║ Total rules:       {:>5}                 ║\n", self.total_rules));
-        s.push_str(&format!("║ With tests:        {:>5}                 ║\n", self.rules_with_tests));
-        s.push_str(&format!("║ Missing tests:     {:>5}                 ║\n", self.invalid_rules));
-        s.push_str(&format!("║ Total TP cases:    {:>5}                 ║\n", self.total_tp_cases));
-        s.push_str(&format!("║ Total TN cases:    {:>5}                 ║\n", self.total_tn_cases));
-        s.push_str(&format!("║ TP passed:         {:>5}                 ║\n", self.total_tp_passed));
-        s.push_str(&format!("║ TN passed:         {:>5}                 ║\n", self.total_tn_passed));
-        s.push_str(&format!("║ Aggregate FP rate: {:>5.1}%                ║\n", self.aggregate_fp_rate * 100.0));
-        s.push_str(&format!("║ Precision:         {:>5.1}%                ║\n", self.aggregate_precision * 100.0));
-        s.push_str(&format!("║ Recall:            {:>5.1}%                ║\n", self.aggregate_recall * 100.0));
+        s.push_str(&format!(
+            "║ Total rules:       {:>5}                 ║\n",
+            self.total_rules
+        ));
+        s.push_str(&format!(
+            "║ With tests:        {:>5}                 ║\n",
+            self.rules_with_tests
+        ));
+        s.push_str(&format!(
+            "║ Missing tests:     {:>5}                 ║\n",
+            self.invalid_rules
+        ));
+        s.push_str(&format!(
+            "║ Total TP cases:    {:>5}                 ║\n",
+            self.total_tp_cases
+        ));
+        s.push_str(&format!(
+            "║ Total TN cases:    {:>5}                 ║\n",
+            self.total_tn_cases
+        ));
+        s.push_str(&format!(
+            "║ TP passed:         {:>5}                 ║\n",
+            self.total_tp_passed
+        ));
+        s.push_str(&format!(
+            "║ TN passed:         {:>5}                 ║\n",
+            self.total_tn_passed
+        ));
+        s.push_str(&format!(
+            "║ Aggregate FP rate: {:>5.1}%                ║\n",
+            self.aggregate_fp_rate * 100.0
+        ));
+        s.push_str(&format!(
+            "║ Precision:         {:>5.1}%                ║\n",
+            self.aggregate_precision * 100.0
+        ));
+        s.push_str(&format!(
+            "║ Recall:            {:>5.1}%                ║\n",
+            self.aggregate_recall * 100.0
+        ));
         s.push_str("╚══════════════════════════════════════════╝\n");
 
         if !self.rejected_rules.is_empty() {
@@ -418,9 +442,18 @@ impl RuleValidationReport {
         s.push_str("╔══════════════════════════════════════════╗\n");
         s.push_str("║     Rule Validation Report               ║\n");
         s.push_str("╠══════════════════════════════════════════╣\n");
-        s.push_str(&format!("║ Total rules:   {:>5}                     ║\n", self.total_rules));
-        s.push_str(&format!("║ Valid rules:   {:>5}                     ║\n", self.valid_rules));
-        s.push_str(&format!("║ Invalid rules: {:>5}                     ║\n", self.invalid_rules));
+        s.push_str(&format!(
+            "║ Total rules:   {:>5}                     ║\n",
+            self.total_rules
+        ));
+        s.push_str(&format!(
+            "║ Valid rules:   {:>5}                     ║\n",
+            self.valid_rules
+        ));
+        s.push_str(&format!(
+            "║ Invalid rules: {:>5}                     ║\n",
+            self.invalid_rules
+        ));
         s.push_str("╚══════════════════════════════════════════╝\n");
 
         for err in &self.errors {

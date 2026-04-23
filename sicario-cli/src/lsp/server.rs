@@ -21,9 +21,9 @@ use lsp_types::{
     CodeAction, CodeActionKind, CodeActionOptions, CodeActionOrCommand, CodeActionParams,
     CodeActionProviderCapability, CodeActionResponse, Diagnostic, DiagnosticSeverity,
     DidChangeTextDocumentParams, DidCloseTextDocumentParams, DidOpenTextDocumentParams,
-    DidSaveTextDocumentParams, InitializeParams, NumberOrString, Position, PublishDiagnosticsParams,
-    Range, ServerCapabilities, TextDocumentSyncCapability, TextDocumentSyncKind, TextEdit, Url,
-    WorkspaceEdit,
+    DidSaveTextDocumentParams, InitializeParams, NumberOrString, Position,
+    PublishDiagnosticsParams, Range, ServerCapabilities, TextDocumentSyncCapability,
+    TextDocumentSyncKind, TextEdit, Url, WorkspaceEdit,
 };
 use serde_json::Value;
 
@@ -79,15 +79,11 @@ impl SicarioLspServer {
     /// Advertised server capabilities.
     fn capabilities() -> ServerCapabilities {
         ServerCapabilities {
-            text_document_sync: Some(TextDocumentSyncCapability::Kind(
-                TextDocumentSyncKind::FULL,
-            )),
-            code_action_provider: Some(CodeActionProviderCapability::Options(
-                CodeActionOptions {
-                    code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
-                    ..Default::default()
-                },
-            )),
+            text_document_sync: Some(TextDocumentSyncCapability::Kind(TextDocumentSyncKind::FULL)),
+            code_action_provider: Some(CodeActionProviderCapability::Options(CodeActionOptions {
+                code_action_kinds: Some(vec![CodeActionKind::QUICKFIX]),
+                ..Default::default()
+            })),
             ..Default::default()
         }
     }
@@ -133,15 +129,10 @@ impl SicarioLspServer {
 
     // ── Notification handling ─────────────────────────────────────────────
 
-    fn handle_notification(
-        &mut self,
-        notif: Notification,
-        connection: &Connection,
-    ) -> Result<()> {
+    fn handle_notification(&mut self, notif: Notification, connection: &Connection) -> Result<()> {
         match notif.method.as_str() {
             DidOpenTextDocument::METHOD => {
-                let params: DidOpenTextDocumentParams =
-                    serde_json::from_value(notif.params)?;
+                let params: DidOpenTextDocumentParams = serde_json::from_value(notif.params)?;
                 let uri = params.text_document.uri.clone();
                 self.open_documents
                     .insert(uri.clone(), params.text_document.text);
@@ -149,8 +140,7 @@ impl SicarioLspServer {
                 self.scan_and_publish(&uri, connection)?;
             }
             DidChangeTextDocument::METHOD => {
-                let params: DidChangeTextDocumentParams =
-                    serde_json::from_value(notif.params)?;
+                let params: DidChangeTextDocumentParams = serde_json::from_value(notif.params)?;
                 let uri = params.text_document.uri.clone();
                 // Full sync — take the last content change.
                 if let Some(change) = params.content_changes.into_iter().last() {
@@ -160,16 +150,14 @@ impl SicarioLspServer {
                 self.pending_scans.insert(uri, Instant::now());
             }
             DidSaveTextDocument::METHOD => {
-                let params: DidSaveTextDocumentParams =
-                    serde_json::from_value(notif.params)?;
+                let params: DidSaveTextDocumentParams = serde_json::from_value(notif.params)?;
                 let uri = params.text_document.uri;
                 // On save, scan immediately (bypass debounce).
                 self.pending_scans.remove(&uri);
                 self.scan_and_publish(&uri, connection)?;
             }
             DidCloseTextDocument::METHOD => {
-                let params: DidCloseTextDocumentParams =
-                    serde_json::from_value(notif.params)?;
+                let params: DidCloseTextDocumentParams = serde_json::from_value(notif.params)?;
                 let uri = params.text_document.uri;
                 self.open_documents.remove(&uri);
                 self.pending_scans.remove(&uri);
@@ -272,7 +260,10 @@ impl SicarioLspServer {
 
                 let line = if f.line > 0 { f.line - 1 } else { 0 } as u32;
                 let col = if f.column > 0 { f.column - 1 } else { 0 } as u32;
-                let end_line = f.end_line.map(|l| if l > 0 { l - 1 } else { 0 } as u32).unwrap_or(line);
+                let end_line = f
+                    .end_line
+                    .map(|l| if l > 0 { l - 1 } else { 0 } as u32)
+                    .unwrap_or(line);
                 let end_col = f.end_column.map(|c| c as u32).unwrap_or(col + 1);
 
                 let range = Range {
@@ -373,12 +364,7 @@ impl SicarioLspServer {
 
     /// Build a code action that inserts a `// sicario-ignore:<rule-id>` comment
     /// on the line above the diagnostic.
-    fn make_suppress_action(
-        &self,
-        uri: &Url,
-        diag: &Diagnostic,
-        rule_id: &str,
-    ) -> CodeAction {
+    fn make_suppress_action(&self, uri: &Url, diag: &Diagnostic, rule_id: &str) -> CodeAction {
         let insert_line = diag.range.start.line;
         let comment = format!("// sicario-ignore:{}\n", rule_id);
 
@@ -445,7 +431,10 @@ fn collect_yaml_files(dir: &Path) -> Vec<PathBuf> {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
             let p = entry.path();
-            if p.extension().map(|e| e == "yaml" || e == "yml").unwrap_or(false) {
+            if p.extension()
+                .map(|e| e == "yaml" || e == "yml")
+                .unwrap_or(false)
+            {
                 paths.push(p);
             }
         }

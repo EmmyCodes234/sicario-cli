@@ -89,13 +89,12 @@ impl SuppressionLearner {
     pub fn load(project_root: &Path) -> Result<Self> {
         let mut learner = Self::new(project_root);
         if learner.storage_path.exists() {
-            let data = std::fs::read_to_string(&learner.storage_path)
-                .with_context(|| {
-                    format!(
-                        "Failed to read learned suppressions from {:?}",
-                        learner.storage_path
-                    )
-                })?;
+            let data = std::fs::read_to_string(&learner.storage_path).with_context(|| {
+                format!(
+                    "Failed to read learned suppressions from {:?}",
+                    learner.storage_path
+                )
+            })?;
             learner.patterns = serde_json::from_str(&data).with_context(|| {
                 format!(
                     "Failed to parse learned suppressions from {:?}",
@@ -109,9 +108,8 @@ impl SuppressionLearner {
     /// Persist current patterns to disk.
     pub fn save(&self) -> Result<()> {
         if let Some(parent) = self.storage_path.parent() {
-            std::fs::create_dir_all(parent).with_context(|| {
-                format!("Failed to create directory {:?}", parent)
-            })?;
+            std::fs::create_dir_all(parent)
+                .with_context(|| format!("Failed to create directory {:?}", parent))?;
         }
         let json = serde_json::to_string_pretty(&self.patterns)
             .context("Failed to serialize learned suppressions")?;

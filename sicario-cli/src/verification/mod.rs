@@ -7,6 +7,4 @@
 
 pub mod scanner;
 
-pub use scanner::{
-    OriginalFinding, VerificationResult, VerificationScanner, VerificationScanning,
-};
+pub use scanner::{OriginalFinding, VerificationResult, VerificationScanner, VerificationScanning};

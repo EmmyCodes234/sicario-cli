@@ -146,15 +146,9 @@ pub fn collect_git_metadata() -> (String, String, String) {
         Err(_) => return (repository, String::new(), String::new()),
     };
 
-    let branch = head
-        .shorthand()
-        .unwrap_or("")
-        .to_string();
+    let branch = head.shorthand().unwrap_or("").to_string();
 
-    let commit_sha = head
-        .target()
-        .map(|oid| oid.to_string())
-        .unwrap_or_default();
+    let commit_sha = head.target().map(|oid| oid.to_string()).unwrap_or_default();
 
     (repository, branch, commit_sha)
 }

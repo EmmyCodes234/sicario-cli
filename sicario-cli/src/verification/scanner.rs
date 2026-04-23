@@ -87,9 +87,7 @@ impl VerificationScanning for VerificationScanner {
         // 4. Compute fingerprints for every finding in the re-scan.
         let rescan_fingerprints: Vec<String> = vulnerabilities
             .iter()
-            .map(|v| {
-                Finding::compute_fingerprint(&v.rule_id, &v.file_path, &v.snippet)
-            })
+            .map(|v| Finding::compute_fingerprint(&v.rule_id, &v.file_path, &v.snippet))
             .collect();
 
         // 5. Check whether the original finding is still present.
@@ -190,11 +188,7 @@ mod tests {
             engine.load_rules(&rule_path).unwrap();
             let vulns = engine.scan_file(&vuln_file).unwrap();
             assert!(!vulns.is_empty(), "should detect eval");
-            Finding::compute_fingerprint(
-                &vulns[0].rule_id,
-                &vulns[0].file_path,
-                &vulns[0].snippet,
-            )
+            Finding::compute_fingerprint(&vulns[0].rule_id, &vulns[0].file_path, &vulns[0].snippet)
         };
 
         let original = OriginalFinding {
@@ -225,11 +219,7 @@ mod tests {
             engine.load_rules(&rule_path).unwrap();
             let vulns = engine.scan_file(&vuln_file).unwrap();
             assert!(!vulns.is_empty());
-            Finding::compute_fingerprint(
-                &vulns[0].rule_id,
-                &vulns[0].file_path,
-                &vulns[0].snippet,
-            )
+            Finding::compute_fingerprint(&vulns[0].rule_id, &vulns[0].file_path, &vulns[0].snippet)
         };
 
         let original = OriginalFinding {
@@ -260,11 +250,7 @@ mod tests {
             engine.load_rules(&eval_rule).unwrap();
             let vulns = engine.scan_file(&vuln_file).unwrap();
             assert!(!vulns.is_empty());
-            Finding::compute_fingerprint(
-                &vulns[0].rule_id,
-                &vulns[0].file_path,
-                &vulns[0].snippet,
-            )
+            Finding::compute_fingerprint(&vulns[0].rule_id, &vulns[0].file_path, &vulns[0].snippet)
         };
 
         let original = OriginalFinding {

@@ -252,15 +252,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
                     // Refresh cache if empty or stale (>24h)
                     if let Ok(true) = vuln_db.is_stale() {
                         if !args.quiet {
-                            eprintln!("sicario: refreshing SCA vulnerability cache from OSV.dev...");
+                            eprintln!(
+                                "sicario: refreshing SCA vulnerability cache from OSV.dev..."
+                            );
                         }
                         match vuln_db.refresh_if_stale(&dep_tuples) {
                             Ok(count) => {
                                 if !args.quiet && count > 0 {
-                                    eprintln!(
-                                        "sicario: cached {} vulnerability records",
-                                        count
-                                    );
+                                    eprintln!("sicario: cached {} vulnerability records", count);
                                 }
                             }
                             Err(e) => {
@@ -340,9 +339,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
             if args.quiet {
                 // Quiet mode: just the summary line
             } else {
-                output::diagnostics::render_diagnostics(&vulns, formatter_config.color_enabled, &mut stdout)?;
+                output::diagnostics::render_diagnostics(
+                    &vulns,
+                    formatter_config.color_enabled,
+                    &mut stdout,
+                )?;
             }
-            let summary = ScanSummary::from_vulns(&vulns, scan_duration, files_scanned, total_rules);
+            let summary =
+                ScanSummary::from_vulns(&vulns, scan_duration, files_scanned, total_rules);
             print_scan_summary(
                 &summary,
                 formatter_config.unicode_enabled,
@@ -396,7 +400,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     // Auto-publish to Sicario Cloud if --publish flag is set
     if args.publish {
         let language_breakdown = build_language_breakdown(&files_to_scan);
-        publish_scan_results(&vulns, scan_duration, rules_loaded, files_scanned, language_breakdown, args.org);
+        publish_scan_results(
+            &vulns,
+            scan_duration,
+            rules_loaded,
+            files_scanned,
+            language_breakdown,
+            args.org,
+        );
     }
 
     // Compute exit code
@@ -426,11 +437,13 @@ fn publish_scan_results(
     language_breakdown: std::collections::HashMap<String, usize>,
     org_id: Option<String>,
 ) {
-    use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
+    use publish::{
+        collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport,
+    };
 
     // Check for cloud auth token — silently skip if not authenticated
-    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let client_id =
+        std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
         .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
@@ -482,7 +495,10 @@ fn publish_scan_results(
 
     match client.publish(&report) {
         Ok(resp) => {
-            eprintln!("Scan published to Sicario Cloud (scan ID: {}).", resp.scan_id);
+            eprintln!(
+                "Scan published to Sicario Cloud (scan ID: {}).",
+                resp.scan_id
+            );
             if let Some(url) = resp.dashboard_url {
                 eprintln!("  Dashboard: {url}");
             }
@@ -525,14 +541,10 @@ fn cmd_suppressions(args: cli::suppressions::SuppressionsCommand) -> Result<Exit
             if patterns.is_empty() {
                 println!("No learned suppression patterns.");
             } else {
-                println!(
-                    "{:<30} {:<8} {}",
-                    "Rule ID", "Count", "Example Snippet"
-                );
+                println!("{:<30} {:<8} {}", "Rule ID", "Count", "Example Snippet");
                 println!("{}", "-".repeat(70));
                 for p in patterns {
-                    let snippet_preview: String =
-                        p.example_snippet.chars().take(40).collect();
+                    let snippet_preview: String = p.example_snippet.chars().take(40).collect();
                     println!("{:<30} {:<8} {}", p.rule_id, p.match_count, snippet_preview);
                 }
             }
@@ -595,8 +607,8 @@ fn cmd_hook(args: cli::hook::HookCommand) -> Result<ExitCode> {
 // ─── Cloud auth commands ──────────────────────────────────────────────────────
 
 fn cmd_cloud_login() -> Result<ExitCode> {
-    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let client_id =
+        std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
         .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
@@ -606,8 +618,8 @@ fn cmd_cloud_login() -> Result<ExitCode> {
 }
 
 fn cmd_cloud_logout() -> Result<ExitCode> {
-    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let client_id =
+        std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
         .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
@@ -618,8 +630,8 @@ fn cmd_cloud_logout() -> Result<ExitCode> {
 }
 
 fn cmd_cloud_whoami() -> Result<ExitCode> {
-    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let client_id =
+        std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
         .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
@@ -640,11 +652,13 @@ fn cmd_cloud_whoami() -> Result<ExitCode> {
 }
 
 fn cmd_cloud_publish(org_id: Option<String>) -> Result<ExitCode> {
-    use publish::{collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport};
+    use publish::{
+        collect_git_metadata, resolve_cloud_url, PublishClient, ScanMetadata, ScanReport,
+    };
 
     // Check authentication
-    let client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-        .unwrap_or_else(|_| "sicario-cli".to_string());
+    let client_id =
+        std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
         .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
 
@@ -704,7 +718,10 @@ fn cmd_cloud_publish(org_id: Option<String>) -> Result<ExitCode> {
 
     match client.publish(&report) {
         Ok(resp) => {
-            eprintln!("Scan published to Sicario Cloud (scan ID: {}).", resp.scan_id);
+            eprintln!(
+                "Scan published to Sicario Cloud (scan ID: {}).",
+                resp.scan_id
+            );
             if let Some(url) = resp.dashboard_url {
                 eprintln!("  Dashboard: {url}");
             }
@@ -1097,7 +1114,9 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
             std::fs::create_dir_all(&config_dir)?;
             let config_path = config_dir.join("config.yaml");
 
-            let model = provider_args.model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+            let model = provider_args
+                .model
+                .unwrap_or_else(|| "gpt-4o-mini".to_string());
             let content = format!(
                 "# Sicario LLM provider config\nendpoint: \"{}\"\nmodel: \"{}\"\n",
                 provider_args.endpoint, model
@@ -1127,7 +1146,9 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
         ConfigAction::Test => {
             let key = key_manager::resolve_api_key();
             if key.is_none() {
-                eprintln!("sicario config test: no API key configured. Run `sicario config set-key`.");
+                eprintln!(
+                    "sicario config test: no API key configured. Run `sicario config set-key`."
+                );
                 return Ok(ExitCode::Clean);
             }
             let endpoint = key_manager::resolve_endpoint();
@@ -1149,7 +1170,10 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
                 .send();
             match resp {
                 Ok(r) if r.status().is_success() => {
-                    eprintln!("sicario: connection successful (key source: {})", key.source.label());
+                    eprintln!(
+                        "sicario: connection successful (key source: {})",
+                        key.source.label()
+                    );
                 }
                 Ok(r) => {
                     eprintln!("sicario: server responded with status {}", r.status());

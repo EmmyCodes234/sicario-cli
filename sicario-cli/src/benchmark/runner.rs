@@ -288,9 +288,7 @@ impl BenchmarkRunner {
         let pid = std::process::id() as usize;
         let mut sys = System::new();
         sys.refresh_process(Pid::from(pid));
-        sys.process(Pid::from(pid))
-            .map(|p| p.memory())
-            .unwrap_or(0)
+        sys.process(Pid::from(pid)).map(|p| p.memory()).unwrap_or(0)
     }
 }
 
@@ -302,12 +300,30 @@ impl BenchmarkResult {
         s.push_str("╔══════════════════════════════════════════╗\n");
         s.push_str("║        Sicario Benchmark Results         ║\n");
         s.push_str("╠══════════════════════════════════════════╣\n");
-        s.push_str(&format!("║ Wall clock:    {:>8} ms               ║\n", self.total_wall_clock_ms));
-        s.push_str(&format!("║ Files scanned: {:>8}                  ║\n", self.files_scanned));
-        s.push_str(&format!("║ Rules loaded:  {:>8}                  ║\n", self.rules_loaded));
-        s.push_str(&format!("║ Findings:      {:>8}                  ║\n", self.findings_count));
-        s.push_str(&format!("║ Files/sec:     {:>8.1}                  ║\n", self.files_per_second));
-        s.push_str(&format!("║ Rules/sec:     {:>8.1}                  ║\n", self.rules_per_second));
+        s.push_str(&format!(
+            "║ Wall clock:    {:>8} ms               ║\n",
+            self.total_wall_clock_ms
+        ));
+        s.push_str(&format!(
+            "║ Files scanned: {:>8}                  ║\n",
+            self.files_scanned
+        ));
+        s.push_str(&format!(
+            "║ Rules loaded:  {:>8}                  ║\n",
+            self.rules_loaded
+        ));
+        s.push_str(&format!(
+            "║ Findings:      {:>8}                  ║\n",
+            self.findings_count
+        ));
+        s.push_str(&format!(
+            "║ Files/sec:     {:>8.1}                  ║\n",
+            self.files_per_second
+        ));
+        s.push_str(&format!(
+            "║ Rules/sec:     {:>8.1}                  ║\n",
+            self.rules_per_second
+        ));
         s.push_str(&format!(
             "║ Peak memory:   {:>8.1} MB               ║\n",
             self.peak_memory_bytes as f64 / (1024.0 * 1024.0)

@@ -251,8 +251,8 @@ impl AuthModule {
     pub fn cloud_login(&self) -> Result<()> {
         let cloud_auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")
             .unwrap_or_else(|_| "https://flexible-terrier-680.convex.site".to_string());
-        let cloud_client_id = std::env::var("SICARIO_CLOUD_CLIENT_ID")
-            .unwrap_or_else(|_| "sicario-cli".to_string());
+        let cloud_client_id =
+            std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
 
         let code_verifier = super::pkce::generate_code_verifier();
         let code_challenge = super::pkce::compute_code_challenge(&code_verifier);
