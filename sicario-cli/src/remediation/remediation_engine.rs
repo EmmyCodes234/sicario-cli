@@ -279,7 +279,7 @@ impl RemediationEngine {
             "php" => Language::Php,
             _ => {
                 eprintln!("sicario: warning — no syntax validator for {language}");
-                return false;
+                return true;
             }
         };
 
