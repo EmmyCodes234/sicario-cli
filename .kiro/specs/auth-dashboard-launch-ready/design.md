@@ -157,6 +157,24 @@ _For any_ input where the bug condition does NOT hold (single-record lookups, wr
 
 **Validates: Requirements 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7, 3.8, 3.9, 3.10**
 
+Property 3: Auth Hardening - Login/Signup Robustness
+
+_For any_ login or signup interaction, the Auth page SHALL: (a) track loading state per auth method (GitHub vs password) independently, (b) show a rate-limit cooldown UI after 3 consecutive failed password attempts, (c) display a password strength indicator during signup, (d) use `<Navigate>` for authenticated redirect instead of imperative `navigate()`, and (e) provide a 15-second timeout with retry for GitHub OAuth.
+
+**Validates: Requirements 2.8, 3.2**
+
+Property 4: CLI Auth Hardening - Device Flow Robustness
+
+_For any_ CLI device flow authentication, the CLI SHALL: (a) use exponential backoff on `slow_down` responses per RFC 8628 §3.5, (b) retry up to 3 times with backoff on network errors during `initiate_device_flow`, (c) print periodic progress messages during polling, (d) provide clear error messages for expired sessions and keychain failures, and (e) validate token sanity on retrieval from the keychain.
+
+**Validates: Requirements 3.4**
+
+Property 5: Device Auth Backend - Expiration Handling
+
+_For any_ device code query where the code has expired (Date.now() > expiresAt), the backend SHALL update the status to "expired" and return the expired record, ensuring the CLI receives a clear signal to stop polling.
+
+**Validates: Requirements 3.10**
+
 ## Fix Implementation
 
 ### Changes Required

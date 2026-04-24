@@ -13,15 +13,15 @@ use crate::engine::Vulnerability;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VulnType {
-    SqlInjection,       // CWE-89
-    Xss,                // CWE-79
-    CommandInjection,   // CWE-78
-    PathTraversal,      // CWE-22
-    Ssrf,               // CWE-918
-    InsecureDeserial,   // CWE-502
-    HardcodedCreds,     // CWE-798
-    OpenRedirect,       // CWE-601
-    Xxe,                // CWE-611
+    SqlInjection,     // CWE-89
+    Xss,              // CWE-79
+    CommandInjection, // CWE-78
+    PathTraversal,    // CWE-22
+    Ssrf,             // CWE-918
+    InsecureDeserial, // CWE-502
+    HardcodedCreds,   // CWE-798
+    OpenRedirect,     // CWE-601
+    Xxe,              // CWE-611
     Unknown,
 }
 
@@ -82,7 +82,10 @@ pub fn classify_vulnerability(vuln: &Vulnerability) -> VulnType {
     if rule.contains("deserial") || rule.contains("pickle") || rule.contains("unsafe-yaml") {
         return VulnType::InsecureDeserial;
     }
-    if rule.contains("hardcoded") || rule.contains("hard-coded") || rule.contains("secret-in-source") {
+    if rule.contains("hardcoded")
+        || rule.contains("hard-coded")
+        || rule.contains("secret-in-source")
+    {
         return VulnType::HardcodedCreds;
     }
     if rule.contains("redirect") || rule.contains("open-redirect") {

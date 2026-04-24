@@ -975,7 +975,7 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
         let rule_files = discover_bundled_rules();
         let batch = engine.generate_and_apply_batch(
             &file_vulns,
-            true,       // auto_confirm
+            true, // auto_confirm
             args.no_verify,
             &rule_files,
         )?;
@@ -1131,8 +1131,7 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
                 .unwrap_or_else(|| "gpt-4o-mini".to_string());
 
             // Load existing config (if any) to preserve extra fields, then update
-            let mut config = key_manager::config_file::load_config_file(&cwd)
-                .unwrap_or_default();
+            let mut config = key_manager::config_file::load_config_file(&cwd).unwrap_or_default();
             config.endpoint = Some(provider_args.endpoint.clone());
             config.model = Some(model.clone());
 

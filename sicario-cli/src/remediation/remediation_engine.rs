@@ -251,7 +251,8 @@ impl RemediationEngine {
             Err(e) => {
                 // Distinguish timeout from other errors (Requirement 2.5)
                 let msg = e.to_string();
-                if msg.contains("timed out") || msg.contains("timeout") || msg.contains("deadline") {
+                if msg.contains("timed out") || msg.contains("timeout") || msg.contains("deadline")
+                {
                     spinner.finish_timeout();
                 } else {
                     spinner.finish_error(&format!("LLM error: {}", msg));
@@ -370,7 +371,11 @@ impl RemediationEngine {
                 Ok(p) => p,
                 Err(e) => {
                     let reason = format!("patch generation failed: {e}");
-                    eprintln!("sicario: skipping {} in {} — {reason}", rule_id, file_path.display());
+                    eprintln!(
+                        "sicario: skipping {} in {} — {reason}",
+                        rule_id,
+                        file_path.display()
+                    );
                     result.skipped += 1;
                     result.details.push(BatchFixDetail {
                         rule_id,
@@ -485,9 +490,7 @@ impl RemediationEngine {
                         result.details.push(BatchFixDetail {
                             rule_id,
                             file_path,
-                            outcome: BatchFixOutcome::Reverted(format!(
-                                "verification error: {e}"
-                            )),
+                            outcome: BatchFixOutcome::Reverted(format!("verification error: {e}")),
                         });
                     }
                 }
