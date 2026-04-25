@@ -2,6 +2,12 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { auth } from "./auth";
 import { api } from "./_generated/api";
+import {
+  requireGitHubAppEnv,
+  generateAppJwt,
+  getInstallationToken,
+  listInstallationRepos,
+} from "./githubApp";
 
 const http = httpRouter();
 
@@ -28,6 +34,38 @@ function base64UrlEncode(bytes: Uint8Array): string {
   let binary = "";
   for (const b of bytes) binary += String.fromCharCode(b);
   return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+// ── Helper: HMAC-SHA256 webhook signature validation ────────────────────────
+async function validateWebhookSignature(
+  payload: string,
+  signature: string,
+  secret: string,
+): Promise<boolean> {
+  try {
+    const encoder = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw",
+      encoder.encode(secret),
+      { name: "HMAC", hash: "SHA-256" },
+      false,
+      ["sign"],
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, encoder.encode(payload));
+    const hexDigest = Array.from(new Uint8Array(sig))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+    const expected = `sha256=${hexDigest}`;
+    // Constant-time-ish comparison (both are hex strings of fixed length)
+    if (expected.length !== signature.length) return false;
+    let mismatch = 0;
+    for (let i = 0; i < expected.length; i++) {
+      mismatch |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+    }
+    return mismatch === 0;
+  } catch {
+    return false;
+  }
 }
 
 // ── Helper: CORS headers ────────────────────────────────────────────────────
@@ -86,6 +124,27 @@ async function resolveIdentity(
     // Lookup failed — treat as unauthenticated
   }
 
+  // 3.5 Project API key: Bearer project:{key}
+  if (token.startsWith("project:")) {
+    const projectApiKey = token.slice("project:".length);
+    if (projectApiKey) {
+      try {
+        const project = await ctx.runQuery(api.projects.getByApiKey, {
+          projectApiKey,
+        });
+        if (project) {
+          return {
+            subject: `project:${project.id}`,
+            projectId: project.id,
+            orgId: project.org_id,
+          } as any;
+        }
+      } catch {
+        // Lookup failed — treat as unauthenticated
+      }
+    }
+  }
+
   return null;
 }
 
@@ -120,68 +179,75 @@ http.route({
       const scanId =
         body.scan_id || `scan-${Date.now()}-${randomAlphanumeric(6)}`;
 
-      // ── (a) Resolve orgId from membership or X-Sicario-Org header ──────
-      const userId = identity.subject;
-      const requestedOrgId = request.headers.get("X-Sicario-Org");
-
       let orgId: string | undefined;
-
-      if (requestedOrgId) {
-        // Verify the user is a member of the specified org
-        const membership = await ctx.runQuery(api.memberships.getForUser, {
-          userId,
-          orgId: requestedOrgId,
-        });
-        if (!membership) {
-          return new Response(
-            JSON.stringify({ error: "Not a member of specified organization" }),
-            {
-              status: 403,
-              headers: { "Content-Type": "application/json", ...corsHeaders() },
-            }
-          );
-        }
-        orgId = requestedOrgId;
-      } else {
-        // Look up the user's first membership
-        const userOrgs: any[] = await ctx.runQuery(api.organizations.listUserOrgs);
-        if (!userOrgs || userOrgs.length === 0) {
-          return new Response(
-            JSON.stringify({ error: "No organization membership found. Please create an organization first." }),
-            {
-              status: 403,
-              headers: { "Content-Type": "application/json", ...corsHeaders() },
-            }
-          );
-        }
-        orgId = userOrgs[0].orgId;
-      }
-
-      // ── (c) Match repository to existing project in this org ───────────
-      const repository = body.metadata?.repository ?? "";
       let projectId: string | undefined;
 
-      if (orgId && repository) {
-        const orgProjects: any[] = await ctx.runQuery(api.projects.listByOrg, {
-          orgId,
-        });
-        const matched = orgProjects.find(
-          (p: any) => p.repository_url === repository
-        );
+      // ── Check if identity was resolved from a project API key ─────────
+      const identityAny = identity as any;
+      if (identityAny.projectId && identityAny.orgId) {
+        // Project API key auth — auto-populate orgId and projectId
+        orgId = identityAny.orgId;
+        projectId = identityAny.projectId;
+      } else {
+        // ── (a) Resolve orgId from membership or X-Sicario-Org header ──
+        const userId = identity.subject;
+        const requestedOrgId = request.headers.get("X-Sicario-Org");
 
-        if (matched) {
-          // ── (c) Use existing project ──────────────────────────────────
-          projectId = matched.id;
+        if (requestedOrgId) {
+          // Verify the user is a member of the specified org
+          const membership = await ctx.runQuery(api.memberships.getForUser, {
+            userId,
+            orgId: requestedOrgId,
+          });
+          if (!membership) {
+            return new Response(
+              JSON.stringify({ error: "Not a member of specified organization" }),
+              {
+                status: 403,
+                headers: { "Content-Type": "application/json", ...corsHeaders() },
+              }
+            );
+          }
+          orgId = requestedOrgId;
         } else {
-          // ── (d) Auto-create project ───────────────────────────────────
-          projectId = `proj-${Date.now()}-${randomAlphanumeric(6)}`;
-          await ctx.runMutation(api.projects.create, {
-            id: projectId,
-            name: repoNameFromUrl(repository),
-            repository_url: repository,
-            description: "",
+          // Look up the user's first membership
+          const userOrgs: any[] = await ctx.runQuery(api.organizations.listUserOrgs);
+          if (!userOrgs || userOrgs.length === 0) {
+            return new Response(
+              JSON.stringify({ error: "No organization membership found. Please create an organization first." }),
+              {
+                status: 403,
+                headers: { "Content-Type": "application/json", ...corsHeaders() },
+              }
+            );
+          }
+          orgId = userOrgs[0].orgId;
+        }
+
+        // ── (c) Match repository to existing project in this org ────────
+        const repository = body.metadata?.repository ?? "";
+
+        if (orgId && repository) {
+          const orgProjects: any[] = await ctx.runQuery(api.projects.listByOrg, {
             orgId,
           });
+          const matched = orgProjects.find(
+            (p: any) => p.repository_url === repository
+          );
+
+          if (matched) {
+            projectId = matched.id;
+          } else {
+            // Auto-create project
+            projectId = `proj-${Date.now()}-${randomAlphanumeric(6)}`;
+            await ctx.runMutation(api.projects.create, {
+              id: projectId,
+              name: repoNameFromUrl(repository),
+              repository_url: repository,
+              description: "",
+              orgId,
+            });
+          }
         }
       }
 
@@ -216,6 +282,123 @@ http.route({
   }),
 });
 
+
+// ── POST /api/v1/github/webhook — GitHub App webhook handler ────────────────
+http.route({
+  path: "/api/v1/github/webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    const webhookSecret = process.env.GITHUB_WEBHOOK_SECRET;
+    if (!webhookSecret) {
+      return new Response(
+        JSON.stringify({ error: "Webhook secret not configured" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+
+    // Validate HMAC-SHA256 signature
+    const signatureHeader = request.headers.get("X-Hub-Signature-256") ?? "";
+    const rawBody = await request.text();
+
+    if (!signatureHeader || !(await validateWebhookSignature(rawBody, signatureHeader, webhookSecret))) {
+      return new Response(
+        JSON.stringify({ error: "Invalid webhook signature" }),
+        { status: 401, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+
+    const eventType = request.headers.get("X-GitHub-Event") ?? "";
+    const payload = JSON.parse(rawBody);
+
+    // Only handle pull_request events
+    if (eventType !== "pull_request") {
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders() },
+      });
+    }
+
+    const action = payload.action; // "opened" | "synchronize" | "closed" etc.
+    const repoUrl = payload.repository?.html_url ?? "";
+    const prNumber = payload.pull_request?.number ?? 0;
+    const prTitle = payload.pull_request?.title ?? "";
+    const merged = payload.pull_request?.merged === true;
+
+    // Resolve projectId from repository URL by scanning all projects
+    let matchedProject: any = null;
+    try {
+      matchedProject = await ctx.runQuery(api.projects.getByRepoUrl, {
+        repositoryUrl: repoUrl,
+      });
+    } catch {
+      // If project resolution fails, acknowledge and move on
+    }
+
+    // No matching project — acknowledge and take no action
+    if (!matchedProject) {
+      return new Response(JSON.stringify({ ok: true, matched: false }), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders() },
+      });
+    }
+
+    const projectId = matchedProject.id;
+    const orgId = matchedProject.org_id;
+
+    try {
+      if (action === "opened" || action === "synchronize") {
+        // Create a prChecks record with status "pending" and trigger scan workflow
+        const checkId = `chk-${Date.now()}-${randomAlphanumeric(6)}`;
+        await ctx.runMutation(api.prChecks.createPrCheck, {
+          checkId,
+          projectId,
+          orgId,
+          prNumber,
+          prTitle,
+          repositoryUrl: repoUrl,
+        });
+
+        // TODO: trigger actual scan workflow on the PR diff
+        return new Response(
+          JSON.stringify({ ok: true, checkId }),
+          { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+        );
+      }
+
+      if (action === "closed" && merged) {
+        // Find matching autoFixPRs record by prNumber and update to "merged"
+        const autoFixes: any[] = await ctx.runQuery(api.autoFixPRs.listByProject, {
+          projectId,
+        });
+        const matchingFix = autoFixes.find(
+          (f: any) => f.pr_number === prNumber && (f.status === "opened" || f.status === "pending"),
+        );
+        if (matchingFix) {
+          await ctx.runMutation(api.autoFixPRs.updateAutoFixStatus, {
+            fixId: matchingFix.fix_id,
+            status: "merged",
+          });
+        }
+
+        return new Response(
+          JSON.stringify({ ok: true, merged: true }),
+          { status: 200, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+        );
+      }
+    } catch (e: any) {
+      return new Response(
+        JSON.stringify({ error: e.message || "Internal error" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+
+    // Unhandled action — acknowledge
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders() },
+    });
+  }),
+});
 
 // ── GET /api/v1/whoami — Return user profile from Bearer token ──────────────
 http.route({
@@ -575,6 +758,55 @@ http.route({
   }),
 });
 
+// ── GET /api/v1/github/repos — List repos for a GitHub App installation ─────
+http.route({
+  path: "/api/v1/github/repos",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const identity = await resolveIdentity(ctx, request);
+    if (!identity) {
+      return new Response(JSON.stringify({ error: "Unauthorized" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json", ...corsHeaders() },
+      });
+    }
+
+    const url = new URL(request.url);
+    const installationId = url.searchParams.get("installation_id");
+    if (!installationId) {
+      return new Response(
+        JSON.stringify({ error: "installation_id query parameter is required" }),
+        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+
+    let env;
+    try {
+      env = requireGitHubAppEnv();
+    } catch (e: any) {
+      return new Response(
+        JSON.stringify({ error: e.message || "Missing GitHub App configuration" }),
+        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+
+    try {
+      const jwt = await generateAppJwt(env.appId, env.privateKey);
+      const token = await getInstallationToken(jwt, installationId);
+      const repos = await listInstallationRepos(token);
+      return new Response(JSON.stringify(repos), {
+        status: 200,
+        headers: { "Content-Type": "application/json", ...corsHeaders() },
+      });
+    } catch (e: any) {
+      return new Response(
+        JSON.stringify({ error: e.message || "GitHub API error" }),
+        { status: 502, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+      );
+    }
+  }),
+});
+
 // ── OPTIONS preflight for all API routes ────────────────────────────────────
 http.route({
   path: "/api/v1/scans",
@@ -618,6 +850,22 @@ http.route({
 
 http.route({
   path: "/api/v1/provider-settings/key",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+http.route({
+  path: "/api/v1/github/repos",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, { status: 204, headers: corsHeaders() });
+  }),
+});
+
+http.route({
+  path: "/api/v1/github/webhook",
   method: "OPTIONS",
   handler: httpAction(async () => {
     return new Response(null, { status: 204, headers: corsHeaders() });

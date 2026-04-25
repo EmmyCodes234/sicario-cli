@@ -10,15 +10,20 @@
 
 import type * as analytics from "../analytics.js";
 import type * as auth from "../auth.js";
+import type * as autoFixPRs from "../autoFixPRs.js";
+import type * as crons from "../crons.js";
 import type * as deviceAuth from "../deviceAuth.js";
 import type * as findings from "../findings.js";
+import type * as githubApp from "../githubApp.js";
 import type * as http from "../http.js";
 import type * as memberships from "../memberships.js";
 import type * as organizations from "../organizations.js";
+import type * as prChecks from "../prChecks.js";
 import type * as projects from "../projects.js";
 import type * as providerSettings from "../providerSettings.js";
 import type * as rbac from "../rbac.js";
 import type * as scans from "../scans.js";
+import type * as scheduledScans from "../scheduledScans.js";
 import type * as sso from "../sso.js";
 import type * as teams from "../teams.js";
 import type * as userProfiles from "../userProfiles.js";
@@ -33,15 +38,20 @@ import type {
 declare const fullApi: ApiFromModules<{
   analytics: typeof analytics;
   auth: typeof auth;
+  autoFixPRs: typeof autoFixPRs;
+  crons: typeof crons;
   deviceAuth: typeof deviceAuth;
   findings: typeof findings;
+  githubApp: typeof githubApp;
   http: typeof http;
   memberships: typeof memberships;
   organizations: typeof organizations;
+  prChecks: typeof prChecks;
   projects: typeof projects;
   providerSettings: typeof providerSettings;
   rbac: typeof rbac;
   scans: typeof scans;
+  scheduledScans: typeof scheduledScans;
   sso: typeof sso;
   teams: typeof teams;
   userProfiles: typeof userProfiles;

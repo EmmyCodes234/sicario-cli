@@ -100,7 +100,114 @@ export const listByOrg = query({
   },
 });
 
+// ---------------------------------------------------------------------------
+// V2 mutations & queries
+// ---------------------------------------------------------------------------
+
+/** Find a project by its repository URL (used by webhook handler). */
+export const getByRepoUrl = query({
+  args: { repositoryUrl: v.string() },
+  handler: async (ctx, args) => {
+    // No index on repositoryUrl, so we scan all projects.
+    // This is acceptable because the projects table is bounded in size.
+    const all = await ctx.db.query("projects").collect();
+    const project = all.find((p) => p.repositoryUrl === args.repositoryUrl);
+    if (!project) return null;
+    return mapProject(project);
+  },
+});
+
+export const createV2 = mutation({
+  args: {
+    id: v.string(),
+    name: v.string(),
+    repositoryUrl: v.string(),
+    orgId: v.string(),
+    githubAppInstallationId: v.string(),
+    framework: v.optional(v.string()),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+    const projectApiKey = crypto.randomUUID();
+
+    await ctx.db.insert("projects", {
+      projectId: args.id,
+      name: args.name,
+      repositoryUrl: args.repositoryUrl,
+      description: "",
+      orgId: args.orgId,
+      createdAt: now,
+      provisioningState: "pending",
+      githubAppInstallationId: args.githubAppInstallationId,
+      framework: args.framework,
+      projectApiKey,
+    });
+
+    return { id: args.id, projectApiKey };
+  },
+});
+
+/** Enforce the provisioning state machine. Returns true on success, false on invalid transition. */
+export const transitionProvisioningState = mutation({
+  args: {
+    projectId: v.string(),
+    from: v.string(),
+    to: v.string(),
+  },
+  handler: async (ctx, args) => {
+    // Reject active → pending
+    if (args.from === "active" && args.to === "pending") {
+      return false;
+    }
+
+    const project = await ctx.db
+      .query("projects")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .first();
+
+    if (!project) return false;
+
+    const currentState = project.provisioningState ?? "active";
+    if (currentState !== args.from) return false;
+
+    await ctx.db.patch(project._id, { provisioningState: args.to });
+    return true;
+  },
+});
+
+export const getByApiKey = query({
+  args: { projectApiKey: v.string() },
+  handler: async (ctx, args) => {
+    const project = await ctx.db
+      .query("projects")
+      .withIndex("by_projectApiKey", (q) =>
+        q.eq("projectApiKey", args.projectApiKey)
+      )
+      .first();
+    if (!project) return null;
+    return mapProject(project);
+  },
+});
+
+// ---------------------------------------------------------------------------
+// Helpers
+// ---------------------------------------------------------------------------
+
+/** Pure function — applies read-time defaults for V2 optional fields. */
+export function resolveProjectDefaults(p: {
+  provisioningState?: string;
+  severityThreshold?: string;
+  autoFixEnabled?: boolean;
+}) {
+  return {
+    provisioningState: p.provisioningState ?? "active",
+    severityThreshold: p.severityThreshold ?? "high",
+    autoFixEnabled: p.autoFixEnabled ?? true,
+  };
+}
+
 function mapProject(p: any) {
+  const defaults = resolveProjectDefaults(p);
   return {
     id: p.projectId,
     name: p.name,
@@ -109,5 +216,11 @@ function mapProject(p: any) {
     org_id: p.orgId ?? null,
     team_id: p.teamId ?? null,
     created_at: p.createdAt,
+    provisioning_state: defaults.provisioningState,
+    github_app_installation_id: p.githubAppInstallationId ?? null,
+    framework: p.framework ?? null,
+    project_api_key: p.projectApiKey ?? null,
+    severity_threshold: defaults.severityThreshold,
+    auto_fix_enabled: defaults.autoFixEnabled,
   };
 }

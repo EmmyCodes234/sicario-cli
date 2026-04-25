@@ -28,10 +28,57 @@ export default defineSchema({
     orgId: v.string(),
     teamId: v.optional(v.string()),
     createdAt: v.string(),
+
+    // V2 extensions (all optional for backward compatibility)
+    provisioningState: v.optional(v.string()), // "pending" | "active" | "failed"
+    githubAppInstallationId: v.optional(v.string()),
+    framework: v.optional(v.string()),
+    projectApiKey: v.optional(v.string()),
+    severityThreshold: v.optional(v.string()), // default: "high"
+    autoFixEnabled: v.optional(v.boolean()), // default: true
   })
     .index("by_projectId", ["projectId"])
     .index("by_teamId", ["teamId"])
-    .index("by_orgId", ["orgId"]),
+    .index("by_orgId", ["orgId"])
+    .index("by_projectApiKey", ["projectApiKey"]),
+
+  prChecks: defineTable({
+    checkId: v.string(),
+    projectId: v.string(),
+    orgId: v.string(),
+    prNumber: v.number(),
+    prTitle: v.string(),
+    repositoryUrl: v.string(),
+    status: v.string(), // "pending" | "passed" | "failed" | "blocked"
+    findingsCount: v.number(),
+    criticalCount: v.number(),
+    highCount: v.number(),
+    githubCheckRunId: v.optional(v.string()),
+    createdAt: v.string(),
+    updatedAt: v.string(),
+  })
+    .index("by_checkId", ["checkId"])
+    .index("by_orgId", ["orgId"])
+    .index("by_projectId", ["projectId"])
+    .index("by_orgId_status", ["orgId", "status"]),
+
+  autoFixPRs: defineTable({
+    fixId: v.string(),
+    projectId: v.string(),
+    orgId: v.string(),
+    cveId: v.string(),
+    packageName: v.string(),
+    fromVersion: v.string(),
+    toVersion: v.string(),
+    prNumber: v.optional(v.number()),
+    prUrl: v.optional(v.string()),
+    status: v.string(), // "pending" | "opened" | "merged" | "closed" | "failed"
+    createdAt: v.string(),
+  })
+    .index("by_fixId", ["fixId"])
+    .index("by_orgId", ["orgId"])
+    .index("by_projectId", ["projectId"])
+    .index("by_projectId_cveId", ["projectId", "cveId"]),
 
   scans: defineTable({
     scanId: v.string(),
