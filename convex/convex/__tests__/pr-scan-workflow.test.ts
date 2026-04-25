@@ -10,9 +10,9 @@ vi.mock("convex/values", () => ({
 vi.mock("../_generated/api", () => ({
   api: {},
 }));
-vi.mock("../githubApp", () => ({
+vi.mock("../githubAppNode", () => ({
   requireGitHubAppEnv: () => ({}),
-  generateAppJwt: async () => "",
+  generateAppJwt: () => "",
   getInstallationToken: async () => "",
 }));
 vi.mock("../prSastRules", () => ({

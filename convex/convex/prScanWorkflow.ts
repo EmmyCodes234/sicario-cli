@@ -7,7 +7,7 @@ import {
   requireGitHubAppEnv,
   generateAppJwt,
   getInstallationToken,
-} from "./githubApp";
+} from "./githubAppNode";
 import {
   scanFiles,
   detectLanguage,
@@ -108,7 +108,7 @@ export const runPrScan = action({
 
       // Step 2: Acquire installation token
       const env = requireGitHubAppEnv();
-      const jwt = await generateAppJwt(env.appId, env.privateKey);
+      const jwt = generateAppJwt(env.appId, env.privateKey);
       const installationToken = await getInstallationToken(
         jwt,
         args.installationId,
