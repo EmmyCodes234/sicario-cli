@@ -1,5 +1,6 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
+import { getAuthUserId } from "@convex-dev/auth/server";
 
 /**
  * Returns true if the string looks like a raw Convex internal hash:
@@ -22,6 +23,24 @@ export const ensureOrg = mutation({
       throw new Error("Not authenticated");
     }
 
+    // Resolve name/email: JWT claims first, then Convex Auth users table fallback
+    let resolvedName = identity.name ?? null;
+    let resolvedEmail = identity.email ?? null;
+    if (!resolvedName || !resolvedEmail) {
+      try {
+        const authUserId = await getAuthUserId(ctx);
+        if (authUserId) {
+          const user = await ctx.db.get(authUserId);
+          if (user) {
+            resolvedName = resolvedName ?? (user as any).name ?? null;
+            resolvedEmail = resolvedEmail ?? (user as any).email ?? null;
+          }
+        }
+      } catch {
+        // Auth user lookup failed — use JWT defaults
+      }
+    }
+
     const userId =
       identity.tokenIdentifier.split("|").pop() ??
       identity.tokenIdentifier;
@@ -34,7 +53,7 @@ export const ensureOrg = mutation({
 
     if (existing) {
       // Self-heal: if the org has a hash-based name and we now have a real name, fix it
-      const betterName = identity.name ?? identity.email ?? null;
+      const betterName = resolvedName ?? resolvedEmail ?? null;
       if (betterName) {
         const org = await ctx.db
           .query("organizations")
@@ -56,7 +75,7 @@ export const ensureOrg = mutation({
     // Create a new personal org
     const orgId = crypto.randomUUID();
     const now = new Date().toISOString();
-    const rawDisplayName = identity.name ?? identity.email ?? userId;
+    const rawDisplayName = resolvedName ?? resolvedEmail ?? userId;
     const displayName = looksLikeHash(rawDisplayName) ? "User" : rawDisplayName;
 
     await ctx.db.insert("organizations", {
