@@ -4,10 +4,18 @@ import { action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
 import {
-  requireGitHubAppEnv,
   getInstallationToken,
 } from "./githubApp";
 import * as crypto from "crypto";
+
+function requireGitHubAppEnvLocal() {
+  const appId = process.env.GITHUB_APP_ID;
+  const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
+  if (!appId || !privateKey) {
+    throw new Error("Missing GitHub App configuration: GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY");
+  }
+  return { appId, privateKey };
+}
 import {
   scanFiles,
   detectLanguage,
@@ -134,7 +142,7 @@ export const runPrScan = action({
       }
 
       // Step 2: Acquire installation token
-      const env = requireGitHubAppEnv();
+      const env = requireGitHubAppEnvLocal();
       const jwt = generateJwt(env.appId, env.privateKey);
       const installationToken = await getInstallationToken(
         jwt,
