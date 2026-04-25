@@ -103,9 +103,12 @@ impl PublishClient {
         }
 
         if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
             bail!(
-                "Cloud publish failed with status {}. Scan results were NOT published.",
-                resp.status()
+                "Cloud publish failed with status {}. Body: {}\nScan results were NOT published.",
+                status,
+                body
             );
         }
 

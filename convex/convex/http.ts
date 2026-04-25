@@ -196,7 +196,10 @@ http.route({
         projectId = identityAny.projectId;
       } else {
         // ── (a) Resolve orgId from membership or X-Sicario-Org header ──
-        const userId = identity.subject;
+        // Normalize userId: Convex Auth stores full tokenIdentifier like
+        // "https://site|sessionId|userId" but memberships use just the last segment
+        const rawUserId = identity.subject;
+        const userId = rawUserId.includes("|") ? rawUserId.split("|").pop()! : rawUserId;
         const requestedOrgId = request.headers.get("X-Sicario-Org");
 
         if (requestedOrgId) {
