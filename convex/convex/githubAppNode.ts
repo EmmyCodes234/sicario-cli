@@ -4,11 +4,46 @@ import { action } from "./_generated/server";
 import { v } from "convex/values";
 import * as crypto from "crypto";
 
+// ── Types ───────────────────────────────────────────────────────────────────
+
+export interface GitHubAppEnv {
+  appId: string;
+  privateKey: string;
+  clientId: string;
+  clientSecret: string;
+}
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+
 function base64UrlEncode(data: Buffer): string {
   return data.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 
-function generateJwt(appId: string, privateKeyPem: string): string {
+// ── requireGitHubAppEnv (Node-safe) ─────────────────────────────────────────
+
+const REQUIRED_ENV_VARS = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+] as const;
+
+export function requireGitHubAppEnv(): GitHubAppEnv {
+  const missing = REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+  if (missing.length > 0) {
+    throw new Error(`Missing GitHub App configuration: ${missing.join(", ")}`);
+  }
+  return {
+    appId: process.env.GITHUB_APP_ID!,
+    privateKey: process.env.GITHUB_APP_PRIVATE_KEY!,
+    clientId: process.env.GITHUB_APP_CLIENT_ID!,
+    clientSecret: process.env.GITHUB_APP_CLIENT_SECRET!,
+  };
+}
+
+// ── generateAppJwt (Node crypto — no atob / Web Crypto) ────────────────────
+
+export function generateAppJwt(appId: string, privateKeyPem: string): string {
   const now = Math.floor(Date.now() / 1000);
 
   const header = base64UrlEncode(
@@ -20,49 +55,48 @@ function generateJwt(appId: string, privateKeyPem: string): string {
 
   const signingInput = `${header}.${payload}`;
 
-  // Normalize PEM: replace literal \n with real newlines
-  const normalizedPem = privateKeyPem.replace(/\\n/g, "\n");
+  // Handle stringified newlines from env var storage
+  const rawKey = privateKeyPem;
+  const formattedPrivateKey = rawKey.replace(/\\n/g, "\n");
 
   const sign = crypto.createSign("RSA-SHA256");
   sign.update(signingInput);
-  const signature = sign.sign(normalizedPem);
+  const signature = sign.sign(formattedPrivateKey);
 
   return `${signingInput}.${base64UrlEncode(signature)}`;
+}
+
+// ── getInstallationToken (Node-safe) ────────────────────────────────────────
+
+export async function getInstallationToken(
+  jwt: string,
+  installationId: string,
+): Promise<string> {
+  const url = `https://api.github.com/app/installations/${installationId}/access_tokens`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Accept: "application/vnd.github+json",
+      "User-Agent": "sicario-security-app",
+      Authorization: `Bearer ${jwt}`,
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GitHub API error (${res.status}): ${body}`);
+  }
+
+  const data = await res.json();
+  return data.token;
 }
 
 export const fetchInstallationRepos = action({
   args: { installationId: v.string() },
   handler: async (ctx, args) => {
-    const appId = process.env.GITHUB_APP_ID;
-    const privateKey = process.env.GITHUB_APP_PRIVATE_KEY;
-
-    if (!appId || !privateKey) {
-      throw new Error("Missing GitHub App configuration: GITHUB_APP_ID or GITHUB_APP_PRIVATE_KEY");
-    }
-
-    // Generate JWT
-    const jwt = generateJwt(appId, privateKey);
-
-    // Get installation token
-    const tokenRes = await fetch(
-      `https://api.github.com/app/installations/${args.installationId}/access_tokens`,
-      {
-        method: "POST",
-        headers: {
-          Accept: "application/vnd.github+json",
-          Authorization: `Bearer ${jwt}`,
-          "User-Agent": "sicario-security-app",
-        },
-      },
-    );
-
-    if (!tokenRes.ok) {
-      const body = await tokenRes.text();
-      throw new Error(`GitHub API error (${tokenRes.status}): ${body}`);
-    }
-
-    const tokenData = await tokenRes.json();
-    const installationToken = tokenData.token;
+    const env = requireGitHubAppEnv();
+    const jwt = generateAppJwt(env.appId, env.privateKey);
+    const installationToken = await getInstallationToken(jwt, args.installationId);
 
     // Fetch repos
     const reposRes = await fetch(
