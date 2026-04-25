@@ -174,6 +174,19 @@ export default defineSchema({
     .index("by_orgId", ["orgId"])
     .index("by_userId_orgId", ["userId", "orgId"]),
 
+  pendingInvitations: defineTable({
+    invitationId: v.string(),
+    email: v.string(),
+    orgId: v.string(),
+    role: v.string(),
+    teamIds: v.array(v.string()),
+    inviterUserId: v.string(),
+    createdAt: v.string(),
+  })
+    .index("by_orgId", ["orgId"])
+    .index("by_email", ["email"])
+    .index("by_orgId_email", ["orgId", "email"]),
+
   ssoConfigs: defineTable({
     orgId: v.string(),
     provider: v.string(), // "saml" | "oidc"
@@ -223,6 +236,7 @@ export default defineSchema({
     languages: v.array(v.string()),
     cicdPlatform: v.optional(v.string()),
     goals: v.array(v.string()),
+    lastNotificationDismissedAt: v.optional(v.string()),
     createdAt: v.string(),
     updatedAt: v.string(),
   }).index("by_userId", ["userId"]),

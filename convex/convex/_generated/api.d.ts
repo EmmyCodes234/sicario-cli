@@ -17,6 +17,7 @@ import type * as findings from "../findings.js";
 import type * as githubApp from "../githubApp.js";
 import type * as githubAppNode from "../githubAppNode.js";
 import type * as http from "../http.js";
+import type * as invitations from "../invitations.js";
 import type * as memberships from "../memberships.js";
 import type * as organizations from "../organizations.js";
 import type * as prChecks from "../prChecks.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   githubApp: typeof githubApp;
   githubAppNode: typeof githubAppNode;
   http: typeof http;
+  invitations: typeof invitations;
   memberships: typeof memberships;
   organizations: typeof organizations;
   prChecks: typeof prChecks;
