@@ -2,12 +2,13 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { auth } from "./auth";
 import { api } from "./_generated/api";
-import {
-  requireGitHubAppEnv,
-  generateAppJwt,
-  getInstallationToken,
-  listInstallationRepos,
-} from "./githubApp";
+// Lazy-import GitHub App utilities to avoid module-level crashes
+// import {
+//   requireGitHubAppEnv,
+//   generateAppJwt,
+//   getInstallationToken,
+//   listInstallationRepos,
+// } from "./githubApp";
 
 const http = httpRouter();
 
@@ -757,6 +758,102 @@ http.route({
     }
   }),
 });
+
+// ── GitHub App utilities (inlined to avoid module import crash) ──────────────
+
+function ghBase64UrlEncode(data: Uint8Array): string {
+  let binary = "";
+  for (const b of data) binary += String.fromCharCode(b);
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+function ghBase64UrlEncodeString(str: string): string {
+  return ghBase64UrlEncode(new TextEncoder().encode(str));
+}
+
+const GH_REQUIRED_ENV_VARS = [
+  "GITHUB_APP_ID",
+  "GITHUB_APP_PRIVATE_KEY",
+  "GITHUB_APP_CLIENT_ID",
+  "GITHUB_APP_CLIENT_SECRET",
+] as const;
+
+function requireGitHubAppEnv() {
+  const missing = GH_REQUIRED_ENV_VARS.filter((v) => !process.env[v]);
+  if (missing.length > 0) {
+    throw new Error(`Missing GitHub App configuration: ${missing.join(", ")}`);
+  }
+  return {
+    appId: process.env.GITHUB_APP_ID!,
+    privateKey: process.env.GITHUB_APP_PRIVATE_KEY!,
+    clientId: process.env.GITHUB_APP_CLIENT_ID!,
+    clientSecret: process.env.GITHUB_APP_CLIENT_SECRET!,
+  };
+}
+
+async function generateAppJwt(appId: string, privateKeyPem: string): Promise<string> {
+  const now = Math.floor(Date.now() / 1000);
+  const header = ghBase64UrlEncodeString(JSON.stringify({ alg: "RS256", typ: "JWT" }));
+  const payload = ghBase64UrlEncodeString(JSON.stringify({ iss: appId, iat: now - 60, exp: now + 600 }));
+  const signingInput = `${header}.${payload}`;
+
+  const normalizedPem = privateKeyPem.replace(/\\n/g, "\n");
+  const pemBody = normalizedPem
+    .replace(/-----BEGIN (?:RSA )?PRIVATE KEY-----/g, "")
+    .replace(/-----END (?:RSA )?PRIVATE KEY-----/g, "")
+    .replace(/\s/g, "");
+
+  const binaryDer = Uint8Array.from(atob(pemBody), (c) => c.charCodeAt(0));
+
+  const key = await crypto.subtle.importKey(
+    "pkcs8",
+    binaryDer.buffer,
+    { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
+    false,
+    ["sign"],
+  );
+
+  const signature = await crypto.subtle.sign(
+    "RSASSA-PKCS1-v1_5",
+    key,
+    new TextEncoder().encode(signingInput),
+  );
+
+  return `${signingInput}.${ghBase64UrlEncode(new Uint8Array(signature))}`;
+}
+
+const GH_API_HEADERS = {
+  Accept: "application/vnd.github+json",
+  "User-Agent": "sicario-security-app",
+} as const;
+
+async function getInstallationToken(jwt: string, installationId: string): Promise<string> {
+  const url = `https://api.github.com/app/installations/${installationId}/access_tokens`;
+  const res = await fetch(url, {
+    method: "POST",
+    headers: { ...GH_API_HEADERS, Authorization: `Bearer ${jwt}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`GitHub API error (${res.status}): ${body}`);
+  }
+  const data = await res.json();
+  return data.token;
+}
+
+async function listInstallationRepos(token: string): Promise<Array<{ name: string; full_name: string; html_url: string }>> {
+  const res = await fetch("https://api.github.com/installation/repositories", {
+    method: "GET",
+    headers: { ...GH_API_HEADERS, Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    const body = await res.text();
+    throw new Error(`Failed to fetch repositories (${res.status}): ${body}`);
+  }
+  const data = await res.json();
+  const repos: any[] = data.repositories ?? [];
+  return repos.map((r: any) => ({ name: r.name, full_name: r.full_name, html_url: r.html_url }));
+}
 
 // ── GET /api/v1/github/repos — List repos for a GitHub App installation ─────
 http.route({
