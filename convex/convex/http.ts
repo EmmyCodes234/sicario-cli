@@ -763,34 +763,34 @@ http.route({
   path: "/api/v1/github/repos",
   method: "GET",
   handler: httpAction(async (ctx, request) => {
-    const identity = await resolveIdentity(ctx, request);
-    if (!identity) {
-      return new Response(JSON.stringify({ error: "Unauthorized" }), {
-        status: 401,
-        headers: { "Content-Type": "application/json", ...corsHeaders() },
-      });
-    }
-
-    const url = new URL(request.url);
-    const installationId = url.searchParams.get("installation_id");
-    if (!installationId) {
-      return new Response(
-        JSON.stringify({ error: "installation_id query parameter is required" }),
-        { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders() } },
-      );
-    }
-
-    let env;
     try {
-      env = requireGitHubAppEnv();
-    } catch (e: any) {
-      return new Response(
-        JSON.stringify({ error: e.message || "Missing GitHub App configuration" }),
-        { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } },
-      );
-    }
+      const identity = await resolveIdentity(ctx, request);
+      if (!identity) {
+        return new Response(JSON.stringify({ error: "Unauthorized" }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders() },
+        });
+      }
 
-    try {
+      const url = new URL(request.url);
+      const installationId = url.searchParams.get("installation_id");
+      if (!installationId) {
+        return new Response(
+          JSON.stringify({ error: "installation_id query parameter is required" }),
+          { status: 400, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+        );
+      }
+
+      let env;
+      try {
+        env = requireGitHubAppEnv();
+      } catch (e: any) {
+        return new Response(
+          JSON.stringify({ error: e.message || "Missing GitHub App configuration" }),
+          { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+        );
+      }
+
       const jwt = await generateAppJwt(env.appId, env.privateKey);
       const token = await getInstallationToken(jwt, installationId);
       const repos = await listInstallationRepos(token);
