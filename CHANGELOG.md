@@ -1,86 +1,117 @@
 # Changelog
 
-All notable changes to this project will be documented in this file.
+All notable changes to Sicario are documented here.
 
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+---
+
+## [0.1.9] — 2026-04-29
 
 ### Added
-- Cloud API via Convex HTTP actions — `POST /api/v1/scans`, `GET /api/v1/whoami`, OAuth device flow endpoints
-- Real SCA vulnerability data from OSV.dev — `OsvImporter` fetches live advisories and populates local SQLite cache
-- Cloud exposure analysis wired into scan pipeline — auto-detects K8s manifests and adjusts finding severity
-- `--no-cloud` flag to disable automatic cloud exposure analysis
-- `--org <ORG_ID>` flag for `scan --publish` and `publish` to target a specific organization
-- `--publish` flag on `scan` to upload results to Sicario Cloud in one step
-- Multi-org support — create organizations, switch between them from the dashboard
-- Org switcher dropdown component in the dashboard sidebar
-- Org-scoped projects and scans — all data is scoped to the active organization
-- Auto-project creation from CLI scans — server matches repository URL or creates a new project
-- Auto-provisioning on first login — personal org + admin membership created automatically
-- `listUserOrgs` query and `createOrg` mutation in the Convex backend
-- `useCurrentOrg()` hook with multi-org switching, localStorage persistence, and fallback logic
-- Device auth page (`/auth/device`) for CLI login approval in the browser
-- Accurate `files_scanned` count and `language_breakdown` map in scan reports and published metadata
+- **Release distribution pipeline** — Convex File Storage backend for binary hosting; `GET /download/latest/:platform` HTTP endpoint streams binaries with correct `Content-Disposition` headers
+- **Download page** (`/download`) — OS auto-detection, platform selector, SHA-256 checksum table, terminal installer blocks
+- **`install.ps1`** — Windows PowerShell installer served at `https://usesicario.xyz/install.ps1`; installs to `%LOCALAPPDATA%\sicario\bin` and updates user PATH
+- **`install.sh`** — served at `https://usesicario.xyz/install.sh` as a static file (previously only available via raw GitHub URL)
+- **`scripts/publish_release.mjs`** — Node.js automation script to upload compiled binaries to Convex File Storage and record them in the `releases` table
+- **`releases` table** in Convex schema — tracks `version`, `platform`, `storageId`, `checksum`, `fileSize`, `isActive` with `by_platform_and_active` and `by_version` indexes
+- **Static Linux musl binary** (`x86_64-unknown-linux-musl`) — fully static, zero glibc dependency, produced via `cargo-zigbuild` in CI
+- **`zigbuild-release.yml`** GitHub Actions workflow — cross-compiles the static Linux binary from `ubuntu-latest` using Zig's bundled clang toolchain
 
 ### Changed
-- CLI default cloud URLs now point to the Convex site URL (no separate API server needed)
-- `projects.list` query now requires `orgId` argument and filters by organization
-- `scans.insert` mutation now accepts and stores `orgId` and `projectId`
-- All dashboard pages use real authenticated `userId` and `orgId` from membership (no more `PLACEHOLDER_ORG`)
-- RBAC hooks receive real org context
-- Compiler-style diagnostic output with source context, span underlines, and rule-specific help hints
-- Recursive rule discovery for subdirectory layouts
-- 331 rules now load successfully across 5 languages
-- Default behavior: `sicario` with no args now scans the current directory instead of launching the TUI
-- TUI is still available via `sicario tui`
-
-### Removed
-- Removed dead `dashboard/` directory (old Next.js dashboard) — `sicario-frontend/` is the sole frontend
-- Removed all references to the old dashboard from docs, configs, and CI
+- Switched `reqwest` and `tungstenite` from `native-tls` to `rustls-tls` — eliminates `openssl-sys` from the dependency tree, enabling cross-compilation without a target sysroot
+- Disabled `git2` SSH feature and enabled `vendored-libgit2` globally — removes `libssh2-sys` → `openssl-sys` transitive dependency
+- Workspace version bumped to `0.1.9`
 
 ### Fixed
-- Fixed scan report metadata — `files_scanned` and `language_breakdown` were hardcoded to `0` and empty map
-- Fixed `SettingsPage` calling `projects.list` without required `orgId` argument
-- Fixed capture amplification bug — findings are now deduplicated per rule per line (was inflated 3-4x)
-- Rule loading is now tolerant of individual bad rules (skips instead of failing whole file)
+- All CI checks (clippy, compile, fmt) that were failing due to `execution_trace` field added to `Vulnerability` and `TelemetryFinding` structs without updating all construction sites
+- `clippy::type_complexity` in `sast_engine.rs` — extracted 8-tuple type into a `type DefaultRule<'a>` alias
+- `clippy::manual_strip` in `exclusion_manager.rs` — replaced `line[1..]` with `line.strip_prefix('/')`
+- `clippy::result_unit_err` in `iteration_guard.rs` — replaced `Result<u32, ()>` with a proper `IterationLimitError` type
+- `clippy::new_without_default` in `audit/trace.rs` — added `Default` impl for `ExecutionTrace`
+- Doctest failure in `diagnostics.rs` — changed bare ` ``` ` fence containing Unicode characters to ` ```text `
 
-### Previously Added
+---
+
+## [0.1.8] — 2026-04-25
+
+### Added
+- `cargo-zigbuild` cross-compilation pipeline configuration
+- `vendored-libs` feature flag for static builds
+- `.cargo/config.toml` cross-compilation target flags
+
+---
+
+## [0.1.7] — 2026-04-20
+
+### Added
+- **Compiler-style diagnostic output** — findings render like `rustc`/`cargo` errors with source context, span underlines, CWE headers, and rule-specific help hints
+- **Accurate finding deduplication** — one finding per rule per line; eliminates 3–4× inflated counts from multiple captures per match
+- **`--publish` flag on `scan`** — scan and upload results to Sicario Cloud in a single command
+- **`--org <ORG_ID>` flag** — target a specific organization when publishing
+- **`--no-cloud` flag** — disable automatic cloud exposure analysis
+- **Auto-project creation** — server matches repository URL to an existing project or creates a new one automatically
+- **Auto-provisioning** — first login creates a personal org with admin role
+- **Multi-org support** — org switcher in the dashboard sidebar with localStorage persistence
+- **Device auth page** (`/auth/device`) — browser-based CLI login approval
+- **Accurate scan metadata** — `files_scanned` and `language_breakdown` now reflect actual values (were hardcoded to 0)
+- **PR check integration** — `prNumber` in telemetry payload creates/updates a PR check record
+- **`sicario link`** — link a local repository to a Sicario Cloud project
+- **`sicario config`** — manage LLM API keys and provider settings
+- **Execution trace** — `Vulnerability` and `TelemetryFinding` carry an optional `execution_trace` field for audit trails
+
+### Changed
+- Default behavior: `sicario` with no arguments now scans the current directory (was: launch TUI)
+- TUI still available via `sicario tui`
+- 331 rules now load successfully across 5 languages (was: partial load failures)
+- Rule loading is tolerant of individual bad rules — skips instead of failing the whole file
+- `projects.list` query requires `orgId` and filters by organization
+
+### Fixed
+- `SettingsPage` calling `projects.list` without required `orgId`
+- Capture amplification bug causing inflated finding counts
+- Cloud URL configuration pointing to wrong endpoint
+
+---
+
+## [0.1.0 – 0.1.6] — 2026-01-01 to 2026-04-15
+
+### Initial release and iterative development
+
 - Multi-language SAST engine with tree-sitter parsing (Go, Java, JavaScript/TypeScript, Python, Rust)
-- YAML-based security rule system with 500+ built-in rules (100+ per language)
+- 500+ YAML security rules across 5 languages
 - Secret scanning with regex, entropy detection, and provider-specific verifiers
-- SCA module with OSV and GHSA advisory database integration
-- Data-flow reachability analysis to reduce false positives
-- Multi-provider AI remediation engine (any OpenAI-compatible LLM endpoint)
+- SCA module with OSV.dev and GHSA advisory database integration
+- Data-flow reachability analysis
+- Multi-provider AI remediation (any OpenAI-compatible LLM endpoint, BYOK)
 - Template-based fallback fixes for SQL injection, XSS, and command injection
-- Post-fix verification scanning to confirm vulnerability resolution
-- Safe backup/rollback system for automated code fixes
-- Interactive TUI dashboard built with Ratatui
-- Professional CLI with Clap (scan, fix, report, baseline, rules, config, hook, lsp, benchmark, cache, suppressions, completions, login/logout/whoami, publish)
-- SARIF v2.1.0 output for GitHub Code Scanning integration
-- OWASP Top 10 compliance report generation (JSON + Markdown)
-- Per-finding confidence scoring (reachability + pattern specificity + context)
-- Baseline management with delta comparison (new/resolved/unchanged)
-- Git-aware diff scanning for PR workflows (`--diff`, `--staged`)
-- Inline suppression comments (`sicario-ignore`, `sicario-ignore:<rule-id>`)
-- Learning suppressions with auto-suggest for recurring false positives
-- Incremental scan caching (content-addressable, SHA-256)
+- Post-fix verification scanning and safe backup/rollback
+- Interactive TUI dashboard (Ratatui)
+- SARIF v2.1.0 output for GitHub Code Scanning
+- OWASP Top 10 compliance report (JSON + Markdown)
+- Per-finding confidence scoring
+- Baseline management with delta comparison
+- Git-aware diff scanning (`--diff`, `--staged`)
+- Inline suppression comments
+- Incremental scan caching
 - Language Server Protocol server for IDE integration
 - VS Code extension scaffolding
-- Git pre-commit hook management (install/uninstall/status)
-- Performance benchmarking suite with per-language breakdown
+- Git pre-commit hook management
+- Performance benchmarking suite
 - Rule quality test harness with TP/TN validation
-- BYOK key management via OS keyring with precedence resolution
+- BYOK key management via OS keyring
 - OAuth 2.0 device flow authentication with PKCE
 - MCP (Model Context Protocol) server for AI assistant integration
-- Cloud priority scoring with internet exposure analysis
-- Sicario Cloud platform: Convex backend, Axum REST API, React dashboard
-- Cloud publish command for uploading scan results
+- Cloud priority scoring with K8s exposure analysis
+- Sicario Cloud platform: Convex backend + React dashboard
 - GitHub Action for CI integration (`action.yml`)
-- `.sicarioignore` file support (`.gitignore` syntax)
+- `.sicarioignore` file support
 - Shell completions (bash, zsh, fish, PowerShell)
-- Cross-platform builds: Linux (musl static), macOS (Intel + Apple Silicon), Windows (MSVC)
-- Homebrew formula for macOS/Linux installation
-- Curl-based installer script
-- GitHub Actions CI/CD pipeline with cross-compilation and automated releases
+- Cross-platform builds: Linux (musl static + glibc), macOS (Intel + Apple Silicon), Windows (MSVC)
+- Homebrew formula
+- GitHub Actions CI/CD pipeline
+
+[0.1.9]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.1.9
+[0.1.8]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.1.8
+[0.1.7]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.1.7
