@@ -1,16 +1,17 @@
 name: Zigbuild Release
 
-# Produces optimised, static release binaries for:
-#   • x86_64-unknown-linux-musl  – fully static Linux binary (runs anywhere)
-#   • aarch64-apple-darwin       – macOS Apple Silicon binary
+# Produces an optimised, fully static release binary for:
+#   • x86_64-unknown-linux-musl  – static Linux binary (runs on any Linux distro)
 #
-# Both targets are cross-compiled from ubuntu-latest using cargo-zigbuild,
-# which routes the C/C++ compilation of vendored dependencies through Zig's
+# This target is cross-compiled from ubuntu-latest using cargo-zigbuild,
+# which routes C/C++ compilation of vendored dependencies through Zig's
 # bundled clang toolchain so no host SDK is required.
 #
-# This workflow runs in parallel with the existing cargo-dist release.yml.
-# The binaries it produces are uploaded to the same GitHub Release that
-# cargo-dist creates (or creates one itself if it runs first).
+# macOS binaries (aarch64 + x86_64) are handled by the existing cargo-dist
+# release.yml workflow which runs on native macOS runners.
+#
+# This workflow runs in parallel with release.yml and uploads its artifact
+# to the same GitHub Release.
 
 on:
   push:
@@ -18,7 +19,7 @@ on:
       - 'v[0-9]+.[0-9]+.[0-9]+*'
 
 permissions:
-  contents: write   # needed to create/update GitHub Releases
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
@@ -26,22 +27,8 @@ env:
 
 jobs:
   build:
-    name: build (${{ matrix.target }})
+    name: build (x86_64-unknown-linux-musl)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # ── Static Linux binary ──────────────────────────────────────────────
-          - target: x86_64-unknown-linux-musl
-            artifact_name: sicario-x86_64-linux-musl
-            # musl libc is provided by the rustup target; no extra apt packages needed.
-            extra_apt: ""
-
-          # ── macOS Apple Silicon (cross-compiled from Linux via Zig) ──────────
-          - target: aarch64-apple-darwin
-            artifact_name: sicario-aarch64-macos
-            extra_apt: ""
 
     steps:
       - name: Checkout
@@ -53,13 +40,13 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.target }}
+          targets: x86_64-unknown-linux-musl
 
       # ── Zig compiler ─────────────────────────────────────────────────────────
       - name: Install Zig
         uses: goto-bus-stop/setup-zig@v2
         with:
-          version: "0.13.0"   # latest stable; cargo-zigbuild 0.19+ requires ≥0.12
+          version: "0.13.0"
 
       # ── cargo-zigbuild ───────────────────────────────────────────────────────
       - name: Install cargo-zigbuild
@@ -69,56 +56,40 @@ jobs:
       - name: Cache Cargo registry + build artefacts
         uses: swatinem/rust-cache@v2
         with:
-          key: zigbuild-${{ matrix.target }}
-
-      # ── Optional extra system packages ───────────────────────────────────────
-      - name: Install extra apt packages
-        if: ${{ matrix.extra_apt != '' }}
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y ${{ matrix.extra_apt }}
+          key: zigbuild-x86_64-unknown-linux-musl
 
       # ── Build ────────────────────────────────────────────────────────────────
-      # --features vendored-libs vendors libgit2 and disables the D-Bus keyring
-      # backend so the binary has zero dynamic library dependencies.
+      # --features vendored-libs disables the D-Bus keyring backend so the
+      # binary has zero dynamic library dependencies on Linux.
       - name: Build release binary
         run: |
           cargo zigbuild \
             --release \
-            --target ${{ matrix.target }} \
+            --target x86_64-unknown-linux-musl \
             --features vendored-libs \
             -p sicario-cli
 
       # ── Strip + package ──────────────────────────────────────────────────────
-      - name: Strip binary (Linux targets only)
-        if: ${{ contains(matrix.target, 'linux') }}
-        run: |
-          strip target/${{ matrix.target }}/release/sicario
+      - name: Strip binary
+        run: strip target/x86_64-unknown-linux-musl/release/sicario
 
       - name: Package binary into tarball
-        shell: bash
         run: |
-          BINARY=target/${{ matrix.target }}/release/sicario
-          ARCHIVE=${{ matrix.artifact_name }}.tar.gz
-          tar -czf "$ARCHIVE" -C "$(dirname $BINARY)" "$(basename $BINARY)"
-          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+          tar -czf sicario-x86_64-linux-musl.tar.gz \
+            -C target/x86_64-unknown-linux-musl/release sicario
 
       # ── SHA-256 checksum ─────────────────────────────────────────────────────
       - name: Generate SHA-256 checksum
-        run: |
-          sha256sum "${{ env.ARCHIVE }}" > "${{ env.ARCHIVE }}.sha256"
+        run: sha256sum sicario-x86_64-linux-musl.tar.gz > sicario-x86_64-linux-musl.tar.gz.sha256
 
       # ── Upload to GitHub Release ─────────────────────────────────────────────
-      # softprops/action-gh-release will create the release if it doesn't exist
-      # yet, or append to it if cargo-dist already created it.
       - name: Upload to GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_name }}
           files: |
-            ${{ env.ARCHIVE }}
-            ${{ env.ARCHIVE }}.sha256
-          # Don't overwrite a release body that cargo-dist may have already set.
+            sicario-x86_64-linux-musl.tar.gz
+            sicario-x86_64-linux-musl.tar.gz.sha256
           generate_release_notes: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
