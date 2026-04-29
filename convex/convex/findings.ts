@@ -494,3 +494,56 @@ export const suppressLowInfoFindings = mutation({
     return { suppressed };
   },
 });
+
+/**
+ * One-shot deduplication: for each (ruleId, filePath) pair within a project,
+ * keep only the most recently updated Open finding and AutoFixed the rest.
+ *
+ * This cleans up duplicate rows created before the upsert logic was deployed,
+ * where the same vulnerability appeared at slightly different line numbers
+ * across scans and was treated as a new finding each time.
+ */
+export const deduplicateByRuleAndFile = mutation({
+  args: {
+    projectId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const now = new Date().toISOString();
+
+    const allFindings = await ctx.db
+      .query("findings")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .collect();
+
+    // Group open findings by (ruleId, filePath)
+    const groups = new Map<string, typeof allFindings>();
+    for (const f of allFindings) {
+      if (f.triageState !== "Open" && f.triageState !== "Reviewing" && f.triageState !== "ToFix") {
+        continue;
+      }
+      const key = `${f.ruleId}::${f.filePath}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(f);
+    }
+
+    let deduplicated = 0;
+    for (const [, dupes] of groups) {
+      if (dupes.length <= 1) continue;
+
+      // Keep the most recently updated finding; AutoFixed the rest
+      dupes.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+      const [_keep, ...stale] = dupes;
+
+      for (const f of stale) {
+        await ctx.db.patch(f._id, {
+          triageState: "AutoFixed",
+          triageNote: "Auto-resolved: duplicate finding superseded by newer scan result.",
+          updatedAt: now,
+        });
+        deduplicated++;
+      }
+    }
+
+    return { deduplicated };
+  },
+});
