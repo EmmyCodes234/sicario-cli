@@ -12,18 +12,26 @@ export const overview = query({
 
     for (const f of findings) {
       total++;
-      switch (f.triageState) {
-        case "Open": case "Reviewing": case "ToFix": open++; break;
-        case "Fixed": fixed++; break;
-        case "Ignored": case "AutoIgnored": ignored++; break;
-        default: open++; break;
-      }
-      switch (f.severity) {
-        case "Critical": critical++; break;
-        case "High": high++; break;
-        case "Medium": medium++; break;
-        case "Low": low++; break;
-        case "Info": info++; break;
+      const isOpen = f.triageState === "Open" || f.triageState === "Reviewing" || f.triageState === "ToFix";
+      const isFixed = f.triageState === "Fixed" || f.triageState === "AutoFixed";
+      const isIgnored = f.triageState === "Ignored" || f.triageState === "AutoIgnored";
+
+      if (isOpen) open++;
+      else if (isFixed) fixed++;
+      else if (isIgnored) ignored++;
+      else open++; // unknown state — treat as open
+
+      // Severity breakdown counts only open (actionable) findings.
+      // AutoIgnored / Ignored / Fixed findings are excluded so the dashboard
+      // reflects the real signal, not historical noise.
+      if (!isFixed && !isIgnored) {
+        switch (f.severity) {
+          case "Critical": critical++; break;
+          case "High": high++; break;
+          case "Medium": medium++; break;
+          case "Low": low++; break;
+          case "Info": info++; break;
+        }
       }
     }
 
@@ -33,7 +41,7 @@ export const overview = query({
       : 0;
 
     return {
-      total_findings: total,
+      total_findings: open, // "Vulnerabilities Intercepted" = open (non-ignored, non-fixed) findings
       open_findings: open,
       fixed_findings: fixed,
       ignored_findings: ignored,

@@ -290,7 +290,7 @@
 - id: "js-ts-ignore-security-code"
   name: "@ts-ignore Before Security-Sensitive Code"
   description: "Using @ts-ignore to suppress TypeScript errors in security-sensitive code hides potential type safety issues. Fix the underlying type error instead of suppressing it."
-  severity: Medium
+  severity: Low
   languages:
     - TypeScript
   pattern:

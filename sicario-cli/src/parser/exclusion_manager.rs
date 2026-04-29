@@ -42,8 +42,7 @@ impl ExclusionManager {
     fn build_default_excludes() -> Result<GlobSet> {
         let mut builder = GlobSetBuilder::new();
 
-        // Default exclusions — use **/ prefix so they match at any depth
-        // and with absolute paths on any OS
+        // ── Build artefacts & package managers ───────────────────────────
         let defaults = vec![
             "**/node_modules/**",
             "**/dist/**",
@@ -59,6 +58,28 @@ impl ExclusionManager {
             "**/venv/**",
             "**/.sicario/backups/**",
             "**/.sicario/cache/**",
+            // ── Smart default exclusions: test & fixture directories ──────
+            // These directories contain intentional test code where patterns
+            // like unwrap(), eval(), and hardcoded values are expected and safe.
+            // Scanning them produces high-volume Low-severity noise with no
+            // actionable signal for enterprise CI/CD pipelines.
+            "**/tests/**",
+            "**/test/**",
+            "**/mocks/**",
+            "**/fixtures/**",
+            "**/testdata/**",
+            "**/test-data/**",
+            // ── Smart default exclusions: test file patterns ──────────────
+            "**/*_test.rs",
+            "**/*_test.js",
+            "**/*_test.ts",
+            "**/*_test.py",
+            "**/*.spec.ts",
+            "**/*.spec.js",
+            "**/*.test.ts",
+            "**/*.test.tsx",
+            "**/*.test.js",
+            "**/*.test.jsx",
         ];
 
         for pattern in defaults {
@@ -124,21 +145,26 @@ impl ExclusionManager {
 
             // Handle negation patterns (lines starting with !)
             if line.starts_with('!') {
-                // Negation patterns are not directly supported in globset
-                // For now, we skip them (could be enhanced later)
                 continue;
             }
 
+            // Normalize to forward slashes for cross-platform consistency
+            let line = &line.replace('\\', "/");
+
             // Convert pattern to glob pattern
             let pattern = if line.ends_with('/') {
-                // Directory pattern
-                format!("{}**", line)
+                // Directory pattern — match everything inside at any depth
+                format!("**/{}**", line)
+            } else if line.starts_with('/') {
+                // Rooted pattern — strip leading slash, match from scan root
+                line[1..].to_string()
             } else if !line.contains('/') {
-                // Match anywhere in tree
+                // Bare filename — match anywhere in tree
                 format!("**/{}", line)
             } else {
-                // Relative path pattern
-                line.to_string()
+                // Relative path like `src/pages/Home.tsx` — add **/ prefix so it
+                // matches regardless of how the path is rooted (absolute, `./`, etc.)
+                format!("**/{}", line)
             };
 
             if let Ok(glob) = Glob::new(&pattern) {
@@ -152,10 +178,14 @@ impl ExclusionManager {
 
     /// Check if a path should be excluded from scanning
     pub fn is_excluded(&self, path: &Path) -> bool {
-        // Check against all pattern sets
-        self.default_excludes.is_match(path)
-            || self.gitignore_patterns.is_match(path)
-            || self.sicarioignore_patterns.is_match(path)
+        // Normalize to forward-slash string for cross-platform glob matching.
+        // globset patterns always use `/`; Windows paths use `\`.
+        let normalized = path.to_string_lossy().replace('\\', "/");
+        let normalized_path = Path::new(&normalized);
+
+        self.default_excludes.is_match(normalized_path)
+            || self.gitignore_patterns.is_match(normalized_path)
+            || self.sicarioignore_patterns.is_match(normalized_path)
     }
 }
 

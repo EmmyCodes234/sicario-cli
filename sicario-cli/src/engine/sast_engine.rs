@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use tree_sitter::{Query, QueryCursor};
 
 use super::reachability::ReachabilityAnalyzer;
-use super::{SecurityRule, Vulnerability};
+use super::{OwaspCategory, SecurityRule, Severity, Vulnerability};
 use crate::parser::{ExclusionManager, Language, TreeSitterEngine};
 
 /// Main SAST engine for security analysis
@@ -38,6 +38,123 @@ impl SastEngine {
     /// Get a clone of the exclusion manager for use in parallel scanning.
     pub fn exclusion_manager(&self) -> ExclusionManager {
         self.tree_sitter.exclusion_manager.clone()
+    }
+
+    /// Load a set of hardcoded default rules that work out-of-the-box without
+    /// any external rule files. These cover the most common high-signal patterns
+    /// across JavaScript/TypeScript, Python, and Rust.
+    ///
+    /// Called automatically by `cmd_scan` when no bundled rule files are found
+    /// on disk, ensuring the AST engine always has at least one active rule.
+    pub fn load_default_rules(&mut self) {
+        use crate::parser::Language;
+
+        let defaults: &[(&str, &str, &str, Severity, &[Language], &str, Option<&str>, Option<OwaspCategory>)] = &[
+            // ── JavaScript / TypeScript ──────────────────────────────────────
+            (
+                "js/eval-injection",
+                "Dangerous eval() Usage",
+                "eval() executes arbitrary code and is a common injection vector",
+                Severity::Critical,
+                &[Language::JavaScript, Language::TypeScript],
+                "(call_expression function: (identifier) @fn (#eq? @fn \"eval\")) @call",
+                Some("CWE-95"),
+                Some(OwaspCategory::A03_Injection),
+            ),
+            (
+                "js/hardcoded-secret",
+                "Hardcoded Secret in Variable",
+                "Password or secret assigned as a string literal",
+                Severity::High,
+                &[Language::JavaScript, Language::TypeScript],
+                "(variable_declarator name: (identifier) @name (#match? @name \"(password|passwd|secret|api_key|apikey|token)\") value: (string) @val) @decl",
+                Some("CWE-798"),
+                Some(OwaspCategory::A02_CryptographicFailures),
+            ),
+            (
+                "js/innerhtml-xss",
+                "Dangerous innerHTML Assignment",
+                "Setting innerHTML with user-controlled data leads to XSS",
+                Severity::High,
+                &[Language::JavaScript, Language::TypeScript],
+                "(assignment_expression left: (member_expression property: (property_identifier) @prop (#eq? @prop \"innerHTML\"))) @assign",
+                Some("CWE-79"),
+                Some(OwaspCategory::A03_Injection),
+            ),
+            // ── Python ───────────────────────────────────────────────────────
+            (
+                "py/eval-injection",
+                "Dangerous eval() Usage",
+                "eval() executes arbitrary code and is a common injection vector",
+                Severity::Critical,
+                &[Language::Python],
+                "(call function: (identifier) @fn (#eq? @fn \"eval\")) @call",
+                Some("CWE-95"),
+                Some(OwaspCategory::A03_Injection),
+            ),
+            (
+                "py/exec-injection",
+                "Dangerous exec() Usage",
+                "exec() executes arbitrary code and is a common injection vector",
+                Severity::Critical,
+                &[Language::Python],
+                "(call function: (identifier) @fn (#eq? @fn \"exec\")) @call",
+                Some("CWE-95"),
+                Some(OwaspCategory::A03_Injection),
+            ),
+            (
+                "py/hardcoded-secret",
+                "Hardcoded Secret in Assignment",
+                "Password or secret assigned as a string literal",
+                Severity::High,
+                &[Language::Python],
+                "(assignment left: (identifier) @name (#match? @name \"(password|passwd|secret|api_key|apikey|token)\") right: (string) @val) @assign",
+                Some("CWE-798"),
+                Some(OwaspCategory::A02_CryptographicFailures),
+            ),
+            // ── Rust ─────────────────────────────────────────────────────────
+            (
+                "rust/unsafe-block",
+                "Unsafe Block Usage",
+                "Unsafe blocks bypass Rust's memory safety guarantees",
+                Severity::Medium,
+                &[Language::Rust],
+                "(unsafe_block) @unsafe",
+                Some("CWE-119"),
+                Some(OwaspCategory::A04_InsecureDesign),
+            ),
+            (
+                "rust/todo-panic",
+                "todo!() Macro in Production Code",
+                "todo!() panics at runtime and should not be in production code",
+                Severity::Medium,
+                &[Language::Rust],
+                "(macro_invocation macro: (identifier) @name (#eq? @name \"todo\")) @mac",
+                Some("CWE-248"),
+                Some(OwaspCategory::A05_SecurityMisconfiguration),
+            ),
+        ];
+
+        for (id, name, desc, severity, languages, query, cwe_id, owasp_category) in defaults {
+            let rule = SecurityRule {
+                id: id.to_string(),
+                name: name.to_string(),
+                description: desc.to_string(),
+                severity: *severity,
+                languages: languages.to_vec(),
+                pattern: crate::engine::security_rule::QueryPattern {
+                    query: query.to_string(),
+                    captures: vec!["call".to_string()],
+                },
+                fix_template: None,
+                cwe_id: cwe_id.map(|s| s.to_string()),
+                owasp_category: *owasp_category,
+                help_uri: None,
+                test_cases: None,
+            };
+            // Silently skip rules that fail to compile for the current platform
+            let _ = self.validate_and_compile_rule(rule);
+        }
     }
 
     /// Load security rules from YAML file
@@ -399,6 +516,69 @@ impl SastEngine {
         Ok(())
     }
 
+    /// Like `collect_files_recursive`, but also returns the number of files
+    /// that were skipped because they matched a `.sicarioignore` (or
+    /// `.gitignore` / default-exclude) pattern.
+    ///
+    /// The ignored count covers only files whose language is supported by the
+    /// AST engine — unsupported file types (e.g. `.css`, `.md`) are silently
+    /// skipped and not counted as "ignored" since the engine would never have
+    /// scanned them anyway.
+    pub fn collect_files_with_ignored_count(
+        &self,
+        dir: &Path,
+        files: &mut Vec<PathBuf>,
+    ) -> Result<usize> {
+        let mut ignored = 0usize;
+        self.collect_files_with_ignored_count_inner(dir, files, &mut ignored)?;
+        Ok(ignored)
+    }
+
+    fn collect_files_with_ignored_count_inner(
+        &self,
+        dir: &Path,
+        files: &mut Vec<PathBuf>,
+        ignored: &mut usize,
+    ) -> Result<()> {
+        if !dir.is_dir() {
+            return Ok(());
+        }
+
+        let entries = std::fs::read_dir(dir)
+            .with_context(|| format!("Failed to read directory: {:?}", dir))?;
+
+        for entry in entries {
+            let entry = entry?;
+            let path = entry.path();
+
+            if path.is_dir() {
+                // Fast skip for well-known non-source directories
+                if let Some(
+                    "node_modules" | ".git" | "target" | "dist" | "build" | "__pycache__" | ".venv"
+                    | "venv" | ".sicario",
+                ) = path.file_name().and_then(|n| n.to_str())
+                {
+                    continue;
+                }
+                if !self.tree_sitter.should_scan_file(&path) {
+                    continue;
+                }
+                self.collect_files_with_ignored_count_inner(&path, files, ignored)?;
+            } else if path.is_file() {
+                // Only count as "ignored" if the engine would otherwise scan it
+                if Language::from_path(&path).is_some() {
+                    if self.tree_sitter.should_scan_file(&path) {
+                        files.push(path);
+                    } else {
+                        *ignored += 1;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
     /// Scan a single file in parallel mode (static method for thread safety)
     pub fn scan_file_parallel(
         path: &Path,
@@ -512,6 +692,18 @@ impl SastEngine {
 
                 vulnerabilities.push(vulnerability);
             }
+        }
+
+        // Apply inline suppression filtering: remove any finding where the
+        // preceding line contains a `// sicario-ignore-next-line` directive.
+        // This runs after all rules so the suppression check is O(findings),
+        // not O(rules × lines).
+        {
+            use crate::scanner::suppression_parser::SuppressionParser;
+            let parser = SuppressionParser::new();
+            vulnerabilities.retain(|v| {
+                !parser.is_sast_suppressed(&source_code, v.line, &v.rule_id).suppressed
+            });
         }
 
         Ok(vulnerabilities)

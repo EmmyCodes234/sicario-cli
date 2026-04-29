@@ -69,9 +69,13 @@ impl From<SeverityLevel> for Severity {
 #[derive(Parser, Debug)]
 #[command(group(ArgGroup::new("verbosity").args(["quiet", "verbose"]).multiple(false)))]
 pub struct ScanArgs {
-    /// Directory to scan
-    #[arg(long, default_value = ".")]
-    pub dir: String,
+    /// Directory to scan (positional, defaults to current directory)
+    #[arg(value_name = "PATH", default_value = ".")]
+    pub path: String,
+
+    /// Directory to scan (named flag, overrides positional PATH if both provided)
+    #[arg(long, hide = true)]
+    pub dir: Option<String>,
 
     /// Rule files to load (can be specified multiple times)
     #[arg(long)]
@@ -84,6 +88,13 @@ pub struct ScanArgs {
     /// Minimum severity to report (default: low)
     #[arg(long, value_enum, default_value = "low")]
     pub severity_threshold: SeverityLevel,
+
+    /// Minimum severity to display in output (default: low).
+    /// Findings below this level are silently dropped from all output and the summary.
+    /// Alias: -s
+    /// Example: --min-severity medium  (hides Low and Info findings)
+    #[arg(long = "min-severity", short = 's', value_enum, default_value = "low")]
+    pub min_severity: SeverityLevel,
 
     /// Only show findings on lines changed since this Git ref
     #[arg(long)]
@@ -177,6 +188,12 @@ pub struct ScanArgs {
     #[arg(long)]
     pub publish: bool,
 
+    /// Publish ALL findings to Sicario Cloud, including Low and Info severity.
+    /// By default, --publish only sends Medium and above to reduce dashboard noise.
+    /// Use this flag to override that filter and send the complete finding set.
+    #[arg(long = "publish-all", requires = "publish")]
+    pub publish_all: bool,
+
     /// Disable automatic cloud exposure analysis (K8s manifest detection)
     #[arg(long)]
     pub no_cloud: bool,
@@ -200,10 +217,12 @@ pub struct ScanArgs {
 impl Default for ScanArgs {
     fn default() -> Self {
         Self {
-            dir: ".".to_string(),
+            path: ".".to_string(),
+            dir: None,
             rules: Vec::new(),
             format: OutputFormat::Text,
             severity_threshold: SeverityLevel::Low,
+            min_severity: SeverityLevel::Low,
             diff: None,
             confidence_threshold: 0.0,
             quiet: false,
@@ -227,6 +246,7 @@ impl Default for ScanArgs {
             no_cache_write: false,
             auto_suppress: false,
             publish: false,
+            publish_all: false,
             no_cloud: false,
             org: None,
             fail_on: None,
@@ -236,6 +256,14 @@ impl Default for ScanArgs {
 }
 
 impl ScanArgs {
+    /// Resolve the effective scan directory.
+    ///
+    /// `--dir` (named flag) takes precedence over the positional `PATH` argument
+    /// for backward compatibility with scripts that use `--dir`.
+    pub fn resolved_dir(&self) -> &str {
+        self.dir.as_deref().unwrap_or(&self.path)
+    }
+
     /// Resolve the `--fail-on` severity threshold.
     ///
     /// Priority: `--fail-on` flag > `SICARIO_FAIL_ON` env var > default (`High`).

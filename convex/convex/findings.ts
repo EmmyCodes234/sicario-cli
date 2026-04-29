@@ -427,3 +427,70 @@ export const listByScanId = query({
     return findings.map(mapFinding);
   },
 });
+
+/**
+ * One-shot migration: mark all existing Low and Info findings as AutoIgnored.
+ *
+ * This cleans up historical noise from before the telemetry severity gate was
+ * introduced. Low/Info findings (e.g. unwrap() in test code) should not appear
+ * as open vulnerabilities in the dashboard.
+ *
+ * Accepts either `orgId` or `projectId` — whichever is available.
+ * Safe to call multiple times — already-AutoIgnored findings are skipped.
+ * Processes up to `batchSize` documents per call to stay within Convex limits.
+ */
+export const suppressLowInfoFindings = mutation({
+  args: {
+    orgId: v.optional(v.string()),
+    projectId: v.optional(v.string()),
+    batchSize: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const batchSize = args.batchSize ?? 500;
+    const now = new Date().toISOString();
+    let suppressed = 0;
+
+    for (const severity of ["Low", "Info"]) {
+      let findings;
+
+      if (args.orgId) {
+        findings = await ctx.db
+          .query("findings")
+          .withIndex("by_orgId_severity", (q) =>
+            q.eq("orgId", args.orgId!).eq("severity", severity)
+          )
+          .collect();
+      } else if (args.projectId) {
+        // Fall back to scanning by projectId when orgId is not known
+        const allForProject = await ctx.db
+          .query("findings")
+          .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId!))
+          .collect();
+        findings = allForProject.filter((f) => f.severity === severity);
+      } else {
+        // No filter — scan everything (admin use only)
+        const all = await ctx.db.query("findings").collect();
+        findings = all.filter((f) => f.severity === severity);
+      }
+
+      for (const f of findings) {
+        if (suppressed >= batchSize) break;
+        if (
+          f.triageState === "AutoIgnored" ||
+          f.triageState === "Ignored" ||
+          f.triageState === "Fixed"
+        ) {
+          continue;
+        }
+        await ctx.db.patch(f._id, {
+          triageState: "AutoIgnored",
+          triageNote: "Auto-suppressed: Low/Info severity findings are below the dashboard signal threshold.",
+          updatedAt: now,
+        });
+        suppressed++;
+      }
+    }
+
+    return { suppressed };
+  },
+});

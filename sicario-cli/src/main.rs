@@ -39,7 +39,7 @@ use clap::Parser;
 use std::path::PathBuf;
 
 use cli::exit_code::ExitCode;
-use cli::{Command, CompletionsArgs, SicarioCli};
+use cli::{Command, CompletionsArgs, LoginArgs, SicarioCli};
 
 fn main() {
     // CRITICAL: When running as an MCP stdio server, stdout is reserved for
@@ -133,7 +133,7 @@ fn dispatch(cmd: Command) -> Result<ExitCode> {
             cmd_completions(args);
             Ok(ExitCode::Clean)
         }
-        Command::Login => cmd_cloud_login(),
+        Command::Login(args) => cmd_cloud_login(args),
         Command::Logout => cmd_cloud_logout(),
         Command::Publish(args) => cmd_cloud_publish(args.org),
         Command::Whoami => cmd_cloud_whoami(),
@@ -176,7 +176,7 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     use output::sarif::emit_sarif;
 
     let scan_start = std::time::Instant::now();
-    let dir = PathBuf::from(&args.dir);
+    let dir = PathBuf::from(args.resolved_dir());
 
     let formatter_config = FormatterConfig::from_flags(
         args.no_color,
@@ -200,11 +200,22 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         }
     }
 
-    // Count files to scan for the summary
+    // If no rule files were found on disk, fall back to the hardcoded default
+    // rules so the AST engine always has at least one active rule.
+    if eng.get_rules().is_empty() {
+        eng.load_default_rules();
+    }
+
+    // Count files to scan for the summary — also capture ignored count
     let mut files_to_scan = Vec::new();
-    eng.collect_files_recursive(&dir, &mut files_to_scan)?;
+    let files_ignored = eng.collect_files_with_ignored_count(&dir, &mut files_to_scan)?;
     let files_scanned = files_to_scan.len();
     let total_rules = eng.get_rules().len();
+    // rules_loaded reflects YAML files loaded; if we fell back to defaults,
+    // report the actual number of active rules instead.
+    if rules_loaded == 0 && total_rules > 0 {
+        rules_loaded = total_rules;
+    }
 
     let mut vulns = eng.scan_directory(&dir)?;
     let scan_duration = scan_start.elapsed();
@@ -399,6 +410,13 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         }
     }
 
+    // ── Severity filter ───────────────────────────────────────────────────
+    // Apply --min-severity / -s before any output or summary tallying.
+    // The Severity enum derives PartialOrd/Ord with Info < Low < Medium < High < Critical,
+    // so a simple >= comparison is all that's needed.
+    let min_severity: Severity = args.min_severity.into();
+    vulns.retain(|v| v.severity >= min_severity);
+
     // Emit primary output in the requested format
     let mut stdout = std::io::stdout();
     match args.format {
@@ -416,7 +434,7 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
                 )?;
             }
             let summary =
-                ScanSummary::from_vulns(&vulns, scan_duration, files_scanned, total_rules);
+                ScanSummary::from_vulns_full(&vulns, scan_duration, files_scanned, files_ignored, total_rules, min_severity);
             print_scan_summary(
                 &summary,
                 formatter_config.unicode_enabled,
@@ -455,7 +473,7 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         for v in &vulns {
             render_finding_text(v, &formatter_config, &mut buf)?;
         }
-        let summary = ScanSummary::from_vulns(&vulns, scan_duration, files_scanned, total_rules);
+        let summary = ScanSummary::from_vulns_full(&vulns, scan_duration, files_scanned, files_ignored, total_rules, min_severity);
         print_scan_summary(
             &summary, false, // no unicode in file output
             false, // no color in file output
@@ -480,7 +498,7 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 
     // Auto-publish to Sicario Cloud via telemetry endpoint if --publish flag is set
     if args.publish {
-        submit_telemetry(&vulns, scan_duration, rules_loaded, files_scanned, args.org.clone());
+        submit_telemetry(&vulns, scan_duration, rules_loaded, files_scanned, args.org.clone(), args.publish_all);
     }
 
     // Compute exit code
@@ -519,6 +537,10 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 /// Resolves auth via the 5-level priority chain, builds a TelemetryPayload from
 /// the scan results, and POSTs to `POST /api/v1/telemetry/scan`.
 ///
+/// By default only Medium+ findings are submitted to keep the dashboard signal-to-noise
+/// ratio high. Pass `publish_all = true` (via `--publish --publish-all`) to submit
+/// the full finding set including Low and Info.
+///
 /// Requirements: 8.1, 8.2, 8.3, 8.4, 8.5, 8.6, 15.1, 15.2
 fn submit_telemetry(
     vulns: &[engine::vulnerability::Vulnerability],
@@ -526,8 +548,19 @@ fn submit_telemetry(
     rules_loaded: usize,
     files_scanned: usize,
     org_id: Option<String>,
+    publish_all: bool,
 ) {
     use publish::{collect_git_metadata, resolve_cloud_url, TelemetryClient, TelemetryFinding, TelemetryPayload};
+
+    // ── Telemetry severity gate ───────────────────────────────────────────
+    // Default: only publish Medium and above to prevent Low/Info noise from
+    // flooding the dashboard (e.g. unwrap() in test code).
+    // Override with --publish --publish-all to send everything.
+    let telemetry_min_severity = if publish_all {
+        engine::vulnerability::Severity::Info
+    } else {
+        engine::vulnerability::Severity::Medium
+    };
 
     let client_id =
         std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
@@ -602,8 +635,10 @@ fn submit_telemetry(
     );
 
     // Map vulnerabilities to TelemetryFinding, skipping synthetic SCA entries
+    // and applying the telemetry severity gate.
     let findings: Vec<TelemetryFinding> = vulns
         .iter()
+        .filter(|v| v.severity >= telemetry_min_severity)
         .filter(|v| !v.file_path.to_string_lossy().starts_with('<'))
         .map(|v| {
             let severity_str = match v.severity {
@@ -854,7 +889,17 @@ fn cmd_hook(args: cli::hook::HookCommand) -> Result<ExitCode> {
 
 // ─── Cloud auth commands ──────────────────────────────────────────────────────
 
-fn cmd_cloud_login() -> Result<ExitCode> {
+fn cmd_cloud_login(args: cli::LoginArgs) -> Result<ExitCode> {
+    // Non-interactive path: store the token directly without browser OAuth
+    if let Some(token) = args.token {
+        use auth::token_store::TokenStore;
+        let store = TokenStore::new()?;
+        store.store_cloud_token(&token)?;
+        eprintln!("Logged in to Sicario Cloud using project token.");
+        return Ok(ExitCode::Clean);
+    }
+
+    // Interactive path: browser-based device flow
     let client_id =
         std::env::var("SICARIO_CLOUD_CLIENT_ID").unwrap_or_else(|_| "sicario-cli".to_string());
     let auth_url = std::env::var("SICARIO_CLOUD_AUTH_URL")

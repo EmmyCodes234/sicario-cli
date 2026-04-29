@@ -64,7 +64,10 @@ pub struct ScanSummary {
     pub info_count: usize,
     pub scan_duration: Duration,
     pub files_scanned: usize,
+    pub files_ignored: usize,
     pub rules_loaded: usize,
+    /// The minimum severity filter that was applied before building this summary.
+    pub min_severity: Severity,
 }
 
 impl ScanSummary {
@@ -74,6 +77,29 @@ impl ScanSummary {
         scan_duration: Duration,
         files_scanned: usize,
         rules_loaded: usize,
+    ) -> Self {
+        Self::from_vulns_with_ignored(vulns, scan_duration, files_scanned, 0, rules_loaded)
+    }
+
+    /// Build a summary from a list of vulnerabilities, including ignored file count.
+    pub fn from_vulns_with_ignored(
+        vulns: &[Vulnerability],
+        scan_duration: Duration,
+        files_scanned: usize,
+        files_ignored: usize,
+        rules_loaded: usize,
+    ) -> Self {
+        Self::from_vulns_full(vulns, scan_duration, files_scanned, files_ignored, rules_loaded, Severity::Low)
+    }
+
+    /// Build a summary with all options, including the active minimum severity filter.
+    pub fn from_vulns_full(
+        vulns: &[Vulnerability],
+        scan_duration: Duration,
+        files_scanned: usize,
+        files_ignored: usize,
+        rules_loaded: usize,
+        min_severity: Severity,
     ) -> Self {
         let mut critical = 0;
         let mut high = 0;
@@ -100,7 +126,9 @@ impl ScanSummary {
             info_count: info,
             scan_duration,
             files_scanned,
+            files_ignored,
             rules_loaded,
+            min_severity,
         }
     }
 }
@@ -146,7 +174,9 @@ pub fn print_scan_summary(
 
     let duration_line = format!("Duration: {:.2}s", duration_secs);
     let files_line = format!("Files scanned: {}", summary.files_scanned);
+    let ignored_line = format!("Files ignored: {}", summary.files_ignored);
     let rules_line = format!("Rules loaded: {}", summary.rules_loaded);
+    let min_sev_line = format!("Minimum Severity: {}", summary.min_severity);
     let semgrep_line = format!("Semgrep estimate: ~{:.1}s (10x slower)", semgrep_estimate);
 
     writeln!(
@@ -155,7 +185,6 @@ pub fn print_scan_summary(
         findings_line,
         width = width - 2
     )?;
-
     writeln!(
         writer,
         "{v_char}  {:<width$}{v_char}",
@@ -171,7 +200,19 @@ pub fn print_scan_summary(
     writeln!(
         writer,
         "{v_char}  {:<width$}{v_char}",
+        ignored_line,
+        width = width - 2
+    )?;
+    writeln!(
+        writer,
+        "{v_char}  {:<width$}{v_char}",
         rules_line,
+        width = width - 2
+    )?;
+    writeln!(
+        writer,
+        "{v_char}  {:<width$}{v_char}",
+        min_sev_line,
         width = width - 2
     )?;
     writeln!(

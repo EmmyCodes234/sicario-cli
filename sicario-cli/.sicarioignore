@@ -1,0 +1,6 @@
+# Intentional vulnerability test fixtures — not production code
+test-samples/
+
+# Mock auth server used for integration testing — contains intentional
+# hardcoded credentials
+mock-auth-server.py

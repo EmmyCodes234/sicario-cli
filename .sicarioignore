@@ -1,2 +1,21 @@
 # Exclude intentional vulnerability test samples from SAST scanning
 test-samples/
+
+# Mock server used for auth integration testing — contains intentional
+# hardcoded credentials and is not production code
+mock-auth-server.py
+
+# Test directories — contain intentional edge-case code and mock data
+**/__tests__/
+**/src/test/
+**/src/__tests__/
+
+# Convex backend — server-side TypeScript with Convex-specific patterns
+# that generate false positives against frontend-oriented JS/TS rules
+convex/convex/
+sicario-frontend/convex/
+
+# Frontend marketing/demo pages — contain syntax-highlighted code snippets
+# rendered as JSX string content (not executable code)
+sicario-frontend/src/pages/Home.tsx
+sicario-frontend/src/pages/Product.tsx

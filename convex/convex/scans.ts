@@ -1,6 +1,24 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 
+/**
+ * Deterministic deduplication fingerprint: hash(projectId + ruleId + filePath).
+ *
+ * Line number is intentionally excluded — lines shift as developers edit code,
+ * but the same vulnerability in the same file stays the same finding.
+ *
+ * Uses a simple djb2-style hash since crypto.subtle is not available in mutations.
+ */
+function dedupFingerprint(projectId: string, ruleId: string, filePath: string): string {
+  const input = `${projectId}::${ruleId}::${filePath}`;
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) + hash) ^ input.charCodeAt(i);
+    hash = hash >>> 0; // keep as unsigned 32-bit
+  }
+  return `dedup:${hash.toString(16).padStart(8, '0')}`;
+}
+
 export const insert = mutation({
   args: {
     scanId: v.string(),
@@ -30,33 +48,103 @@ export const insert = mutation({
       createdAt: now,
     });
 
-    // Insert each finding
+    // Track fingerprints seen in this scan payload (for auto-resolve)
+    const incomingFingerprints = new Set<string>();
+
+    // Upsert each finding by deduplication fingerprint
     for (const f of report.findings ?? []) {
-      await ctx.db.insert("findings", {
-        findingId: f.id ?? "",
-        scanId,
-        ruleId: f.rule_id ?? "",
-        ruleName: f.rule_name ?? "",
-        filePath: typeof f.file_path === "string" ? f.file_path : "",
-        line: f.line ?? 0,
-        column: f.column ?? 0,
-        endLine: f.end_line ?? undefined,
-        endColumn: f.end_column ?? undefined,
-        snippet: f.snippet ?? "",
-        severity: typeof f.severity === "string" ? f.severity : (f.severity ?? "Info"),
-        confidenceScore: f.confidence_score ?? 0,
-        reachable: f.reachable ?? false,
-        cloudExposed: f.cloud_exposed ?? undefined,
-        cweId: f.cwe_id ?? undefined,
-        owaspCategory: f.owasp_category ?? undefined,
-        fingerprint: f.fingerprint ?? "",
-        executionTrace: f.execution_trace ?? undefined,
-        orgId,
-        projectId,
-        triageState: "Open",
-        createdAt: now,
-        updatedAt: now,
-      });
+      const ruleId = f.rule_id ?? "";
+      const filePath = typeof f.file_path === "string" ? f.file_path : "";
+      const severity = typeof f.severity === "string" ? f.severity : (f.severity ?? "Info");
+
+      // Compute dedup fingerprint: hash(projectId + ruleId + filePath)
+      const fp = projectId
+        ? dedupFingerprint(projectId, ruleId, filePath)
+        : (f.fingerprint ?? "");
+
+      incomingFingerprints.add(fp);
+
+      // Check for an existing finding with this dedup fingerprint in this project
+      const existing = fp && projectId
+        ? await ctx.db
+            .query("findings")
+            .withIndex("by_fingerprint", (q) => q.eq("fingerprint", fp))
+            .filter((q) => q.eq(q.field("projectId"), projectId))
+            .first()
+        : null;
+
+      if (existing) {
+        // Update: refresh location and scan reference; preserve triage state
+        await ctx.db.patch(existing._id, {
+          scanId,
+          line: f.line ?? existing.line,
+          column: f.column ?? existing.column,
+          snippet: f.snippet ?? existing.snippet,
+          severity,
+          updatedAt: now,
+          // Re-open if it was previously auto-resolved (Fixed by absence)
+          ...(existing.triageState === "AutoFixed"
+            ? { triageState: "Open", triageNote: "Re-opened: finding reappeared in latest scan." }
+            : {}),
+        });
+      } else {
+        // Insert new finding
+        await ctx.db.insert("findings", {
+          findingId: f.id ?? "",
+          scanId,
+          ruleId,
+          ruleName: f.rule_name ?? "",
+          filePath,
+          line: f.line ?? 0,
+          column: f.column ?? 0,
+          endLine: f.end_line ?? undefined,
+          endColumn: f.end_column ?? undefined,
+          snippet: f.snippet ?? "",
+          severity,
+          confidenceScore: f.confidence_score ?? 0,
+          reachable: f.reachable ?? false,
+          cloudExposed: f.cloud_exposed ?? undefined,
+          cweId: f.cwe_id ?? undefined,
+          owaspCategory: f.owasp_category ?? undefined,
+          fingerprint: fp,
+          executionTrace: f.execution_trace ?? undefined,
+          orgId,
+          projectId,
+          triageState: "Open",
+          createdAt: now,
+          updatedAt: now,
+        });
+      }
+    }
+
+    // Auto-resolve: mark findings that were NOT in this scan as Fixed
+    // (only for AST findings — SCA findings have synthetic file paths starting with '<')
+    if (projectId && incomingFingerprints.size > 0) {
+      const allProjectFindings = await ctx.db
+        .query("findings")
+        .withIndex("by_projectId", (q) => q.eq("projectId", projectId))
+        .collect();
+
+      for (const existing of allProjectFindings) {
+        // Skip already-resolved findings and SCA synthetic entries
+        if (
+          existing.triageState === "Fixed" ||
+          existing.triageState === "AutoFixed" ||
+          existing.triageState === "Ignored" ||
+          existing.triageState === "AutoIgnored" ||
+          existing.filePath.startsWith("<")
+        ) {
+          continue;
+        }
+        // If this finding's fingerprint was not in the incoming scan, auto-resolve it
+        if (existing.fingerprint && !incomingFingerprints.has(existing.fingerprint)) {
+          await ctx.db.patch(existing._id, {
+            triageState: "AutoFixed",
+            triageNote: "Auto-resolved: finding was not present in the latest scan.",
+            updatedAt: now,
+          });
+        }
+      }
     }
 
     // Transition project provisioning state from "pending" to "active" on first scan

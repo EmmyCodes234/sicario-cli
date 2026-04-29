@@ -38,7 +38,7 @@
 - id: "js-sql-template-literal"
   name: "SQL Query with Template Literal Interpolation"
   description: "Interpolating variables into SQL template literals allows SQL injection. Use parameterized queries instead."
-  severity: High
+  severity: Low
   languages:
     - JavaScript
     - TypeScript

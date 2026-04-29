@@ -55,7 +55,7 @@ pub enum Command {
     /// Generate shell completion scripts
     Completions(CompletionsArgs),
     /// Log in to Sicario Cloud
-    Login,
+    Login(LoginArgs),
     /// Log out of Sicario Cloud
     Logout,
     /// Publish scan results to Sicario Cloud
@@ -118,4 +118,14 @@ pub struct PublishArgs {
     /// Organization ID to publish scan results under
     #[arg(long)]
     pub org: Option<String>,
+}
+
+/// Arguments for the `login` subcommand.
+#[derive(Parser, Debug)]
+pub struct LoginArgs {
+    /// Authenticate using a project API token directly (non-interactive).
+    /// Useful in CI environments where browser-based OAuth is not available.
+    /// Example: sicario login --token=sic_proj_...
+    #[arg(long)]
+    pub token: Option<String>,
 }

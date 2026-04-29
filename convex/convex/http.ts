@@ -412,6 +412,7 @@ http.route({
       });
 
       // 10. Insert scan record
+      const now = new Date().toISOString();
       await ctx.runMutation(api.scans.insert, {
         scanId: body.scanId,
         report: {

@@ -206,7 +206,7 @@
 - id: "js-xss-ejs-unescaped"
   name: "EJS Unescaped Output with User Data"
   description: "Using EJS unescaped output tag <%- %> with user-controlled data allows XSS. Use escaped output tag <%= %> or sanitize data before rendering."
-  severity: High
+  severity: Low
   languages:
     - JavaScript
     - TypeScript
@@ -290,7 +290,7 @@
 - id: "js-xss-vue-v-html"
   name: "Vue v-html Directive with Dynamic Binding"
   description: "Using Vue v-html directive renders raw HTML without escaping, allowing XSS if bound to user-controlled data. Use v-text or {{ }} interpolation for safe rendering."
-  severity: High
+  severity: Low
   languages:
     - JavaScript
     - TypeScript

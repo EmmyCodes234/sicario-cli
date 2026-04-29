@@ -175,12 +175,12 @@
 
 - id: "rust-generic-format-sql"
   name: "format! Macro Producing SQL String"
-  description: "Using format! to construct strings containing SQL keywords is a strong indicator of SQL injection vulnerability. Use parameterized queries instead."
+  description: "Using format! to construct SQL strings with interpolated values ({}) is a strong indicator of SQL injection vulnerability. Use parameterized queries instead."
   severity: High
   languages:
     - Rust
   pattern:
-    query: "(macro_invocation macro: (identifier) @mac (#eq? @mac \"format\") (token_tree (string_literal) @sql (#match? @sql \"(?i)(SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE FROM|DROP TABLE)\"))) @call"
+    query: "(macro_invocation macro: (identifier) @mac (#eq? @mac \"format\") (token_tree (string_literal) @sql (#match? @sql \"(?i)(SELECT .* FROM|INSERT INTO|UPDATE .* SET|DELETE FROM|DROP TABLE).*\\\\{\\\\}\"))) @call"
     captures:
       - "call"
   cwe_id: "CWE-89"
@@ -197,7 +197,7 @@
       expected: TrueNegative
     - code: "let path = format!(\"/api/v1/{}/profile\", user_id);"
       expected: TrueNegative
-    - code: "let log = format!(\"Processing request #{}\", req_id);"
+    - code: "let fix = format!(\"// SICARIO FIX: Use parameterized query\\nsqlx::query(\\\"SELECT * FROM table WHERE col = $1\\\").bind(&user_input)\");"
       expected: TrueNegative
 
 # ============================================================================
@@ -211,7 +211,7 @@
   languages:
     - Rust
   pattern:
-    query: "(call_expression function: (scoped_identifier path: (scoped_identifier) @path name: (identifier) @fn (#eq? @fn \"new\")) arguments: (arguments (identifier) @arg)) @call"
+    query: "(call_expression function: (scoped_identifier path: (identifier) @path name: (identifier) @fn (#eq? @path \"Command\") (#eq? @fn \"new\")) arguments: (arguments (identifier) @arg)) @call"
     captures:
       - "call"
   cwe_id: "CWE-78"

@@ -21,8 +21,92 @@ pub fn render_diagnostics(
     }
 
     for vuln in vulns {
-        render_one(vuln, color_enabled, writer)?;
+        if is_sca_finding(vuln) {
+            render_sca(vuln, color_enabled, writer)?;
+        } else {
+            render_one(vuln, color_enabled, writer)?;
+        }
         writeln!(writer)?;
+    }
+
+    Ok(())
+}
+
+/// Returns true if this is a synthetic SCA dependency finding.
+///
+/// SCA findings use a synthetic file path of the form `<ecosystem/package>`,
+/// e.g. `<npm/protobufjs>` or `<cargo/openssl>`. They have no real source
+/// file to read, so the snippet box must not be rendered.
+fn is_sca_finding(vuln: &Vulnerability) -> bool {
+    vuln.file_path
+        .to_string_lossy()
+        .starts_with('<')
+}
+
+/// Render a SCA dependency finding as a clean, minimal block — no snippet box.
+///
+/// Example output:
+/// ```
+///   × [MEDIUM] sca/CVE-2026-4867 (CVE-2026-4867)
+///   Dependency: path-to-regexp  |  Ecosystem: npm  |  Source: package.json
+///   protobufjs@7.2.4 — Prototype pollution via crafted message
+/// ```
+fn render_sca(vuln: &Vulnerability, color: bool, w: &mut dyn Write) -> io::Result<()> {
+    let sev_tag = severity_tag(vuln.severity);
+    let cwe = vuln
+        .cwe_id
+        .as_deref()
+        .map(|c| format!(" ({c})"))
+        .unwrap_or_default();
+
+    // Header
+    let cross = if color { "×".red().bold().to_string() } else { "×".to_string() };
+    let header_label = format!("[{sev_tag}] {}{cwe}", vuln.rule_id);
+    let header = if color {
+        match vuln.severity {
+            Severity::Critical => header_label.red().bold().to_string(),
+            Severity::High => header_label.yellow().bold().to_string(),
+            Severity::Medium => header_label.yellow().to_string(),
+            Severity::Low => header_label.blue().to_string(),
+            Severity::Info => header_label.bright_black().to_string(),
+        }
+    } else {
+        header_label
+    };
+    writeln!(w, "  {cross} {header}")?;
+
+    // Parse ecosystem and package name from the synthetic path `<ecosystem/package>`
+    let raw_path = vuln.file_path.to_string_lossy();
+    let inner = raw_path.trim_start_matches('<').trim_end_matches('>');
+    let (ecosystem, package) = inner
+        .split_once('/')
+        .unwrap_or(("unknown", inner));
+
+    // Infer the manifest file name from the ecosystem
+    let manifest = match ecosystem {
+        "npm" => "package.json",
+        "cargo" => "Cargo.toml",
+        "pypi" => "requirements.txt",
+        "maven" => "pom.xml",
+        "go" => "go.mod",
+        _ => "manifest",
+    };
+
+    // Dependency resolution line
+    let dep_line = format!(
+        "  Dependency: {}  |  Ecosystem: {}  |  Source: {}",
+        package, ecosystem, manifest
+    );
+    if color {
+        writeln!(w, "{}", dep_line.bright_black())?;
+    } else {
+        writeln!(w, "{dep_line}")?;
+    }
+
+    // Summary snippet (the human-readable description from the vuln DB)
+    if !vuln.snippet.is_empty() {
+        let summary = vuln.snippet.lines().next().unwrap_or(&vuln.snippet);
+        writeln!(w, "  {summary}")?;
     }
 
     Ok(())
