@@ -76,6 +76,8 @@ pub enum Command {
     Cache(CacheCommand),
     /// Link the current project to a Sicario Cloud project
     Link(LinkArgs),
+    /// Start the Kiro Power MCP server (stdio JSON-RPC 2.0)
+    Mcp,
 }
 
 /// Arguments for the `report` subcommand.

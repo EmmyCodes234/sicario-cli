@@ -36,6 +36,8 @@ export default defineSchema({
     severityThreshold: v.optional(v.string()), // default: "high"
     autoFixEnabled: v.optional(v.boolean()), // default: true
     githubAppInstallationId: v.optional(v.string()), // legacy field — kept for backward compat
+    slackWebhookUrl: v.optional(v.string()),
+    slackAlertSeverityThreshold: v.optional(v.string()), // "Critical" | "High" | "Medium" | "Low"
   })
     .index("by_projectId", ["projectId"])
     .index("by_teamId", ["teamId"])
@@ -99,7 +101,8 @@ export default defineSchema({
     .index("by_scanId", ["scanId"])
     .index("by_repository", ["repository"])
     .index("by_timestamp", ["timestamp"])
-    .index("by_orgId", ["orgId"]),
+    .index("by_orgId", ["orgId"])
+    .index("by_projectId", ["projectId"]),
 
   findings: defineTable({
     findingId: v.string(),
@@ -138,7 +141,8 @@ export default defineSchema({
     .index("by_orgId", ["orgId"])
     .index("by_orgId_severity", ["orgId", "severity"])
     .index("by_orgId_triageState", ["orgId", "triageState"])
-    .index("by_orgId_createdAt", ["orgId", "createdAt"]),
+    .index("by_orgId_createdAt", ["orgId", "createdAt"])
+    .index("by_projectId", ["projectId"]),
 
   webhooks: defineTable({
     webhookId: v.string(),

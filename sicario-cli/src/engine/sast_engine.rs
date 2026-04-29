@@ -147,9 +147,14 @@ impl SastEngine {
             return Ok(Vec::new());
         }
 
-        // Detect language from file extension
-        let language = Language::from_path(path)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {:?}", path))?;
+        // Detect language from file extension — skip unsupported types gracefully
+        let language = match Language::from_path(path) {
+            Some(l) => l,
+            None => {
+                tracing::debug!("Skipping unsupported file type: {}", path.display());
+                return Ok(Vec::new());
+            }
+        };
 
         // Parse the file (will use cache if available)
         let tree = self.tree_sitter.parse_file(path)?;
@@ -407,9 +412,14 @@ impl SastEngine {
             return Ok(Vec::new());
         }
 
-        // Detect language from file extension
-        let language = Language::from_path(path)
-            .ok_or_else(|| anyhow::anyhow!("Unsupported file type: {:?}", path))?;
+        // Detect language from file extension — skip unsupported types gracefully
+        let language = match Language::from_path(path) {
+            Some(l) => l,
+            None => {
+                tracing::debug!("Skipping unsupported file type: {}", path.display());
+                return Ok(Vec::new());
+            }
+        };
 
         // Read and parse the file
         let source_code = fs::read_to_string(path)?;
@@ -424,10 +434,12 @@ impl SastEngine {
             Language::Go => tree_sitter_go::language(),
             Language::Java => tree_sitter_java::language(),
             Language::Ruby => {
-                anyhow::bail!("No tree-sitter grammar available for Ruby")
+                tracing::debug!("Skipping unsupported file type: {}", path.display());
+                return Ok(Vec::new());
             }
             Language::Php => {
-                anyhow::bail!("No tree-sitter grammar available for PHP")
+                tracing::debug!("Skipping unsupported file type: {}", path.display());
+                return Ok(Vec::new());
             }
         };
         parser.set_language(ts_language)?;

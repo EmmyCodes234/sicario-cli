@@ -35,3 +35,6 @@ tarpaulin-report.html
 
 # Sicario Frontend (private repo — do not commit to sicario-cli)
 sicario-frontend/
+
+# Sicario Power (has its own repo)
+sicario-power/

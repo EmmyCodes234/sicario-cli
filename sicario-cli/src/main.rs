@@ -42,10 +42,25 @@ use cli::exit_code::ExitCode;
 use cli::{Command, CompletionsArgs, SicarioCli};
 
 fn main() {
-    // Silence tracing noise — only show warnings+
-    tracing_subscriber::fmt()
-        .with_max_level(tracing::Level::WARN)
-        .init();
+    // CRITICAL: When running as an MCP stdio server, stdout is reserved for
+    // JSON-RPC 2.0 responses. The tracing subscriber MUST write to stderr.
+    // The default fmt() writer is stdout — we must explicitly redirect to stderr.
+    let args_peek: Vec<String> = std::env::args().collect();
+    let is_mcp = args_peek.iter().any(|a| a == "mcp");
+
+    if is_mcp {
+        // MCP mode: redirect ALL tracing output to stderr, suppress below WARN
+        tracing_subscriber::fmt()
+            .with_writer(std::io::stderr)
+            .with_max_level(tracing::Level::WARN)
+            .with_ansi(false)
+            .init();
+    } else {
+        // Normal CLI mode: default writer (stdout) is fine
+        tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .init();
+    }
 
     let cli = SicarioCli::parse();
 
@@ -140,6 +155,10 @@ fn dispatch(cmd: Command) -> Result<ExitCode> {
         Command::Cache(args) => cmd_cache(args),
         Command::Link(args) => {
             crate::cli::link::cmd_link(args)?;
+            Ok(ExitCode::Clean)
+        }
+        Command::Mcp => {
+            crate::mcp::kiro_tools::StdioMcpRunner::run()?;
             Ok(ExitCode::Clean)
         }
     }
@@ -262,6 +281,10 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     }
 
     // ── SCA: dependency vulnerability scanning ────────────────────────────
+    // Architecture: AST scanning never waits for network. The OSV cache refresh
+    // is fired off in a background thread (fire-and-forget). The local SQLite
+    // cache query runs immediately after — if the cache is empty, SCA findings
+    // will simply be absent this run and populated on the next scan.
     {
         use engine::sca::manifest_parser::ManifestParser;
         use engine::sca::VulnerabilityDatabaseManager;
@@ -286,29 +309,39 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
                         })
                         .collect();
 
-                    // Refresh cache if empty or stale (>24h)
+                    // Kick off OSV cache refresh in a background thread so it
+                    // never blocks the AST pipeline. Zero-exfiltration guarantee:
+                    // if the network is unavailable the scan still completes
+                    // instantly using whatever is already in the local cache.
                     if let Ok(true) = vuln_db.is_stale() {
-                        if !args.quiet {
-                            eprintln!(
-                                "sicario: refreshing SCA vulnerability cache from OSV.dev..."
-                            );
-                        }
-                        match vuln_db.refresh_if_stale(&dep_tuples) {
-                            Ok(count) => {
-                                if !args.quiet && count > 0 {
-                                    eprintln!("sicario: cached {} vulnerability records", count);
+                        let bg_cache_dir = cache_dir.clone();
+                        let bg_dep_tuples = dep_tuples.clone();
+                        std::thread::spawn(move || {
+                            match VulnerabilityDatabaseManager::new(&bg_cache_dir) {
+                                Ok(bg_db) => {
+                                    match bg_db.refresh_if_stale(&bg_dep_tuples) {
+                                        Ok(count) => {
+                                            tracing::debug!(
+                                                "SCA background cache refresh: {} records updated",
+                                                count
+                                            );
+                                        }
+                                        Err(e) => {
+                                            tracing::warn!(
+                                                "SCA background cache refresh failed (scan unaffected): {}",
+                                                e
+                                            );
+                                        }
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("SCA background db init failed: {}", e);
                                 }
                             }
-                            Err(e) => {
-                                tracing::warn!("SCA cache refresh failed: {}", e);
-                                if !args.quiet {
-                                    eprintln!("warning: SCA cache refresh failed: {e}");
-                                }
-                            }
-                        }
+                        });
                     }
 
-                    // Query local cache for each dependency
+                    // Query local cache for each dependency (pure SQLite, no network)
                     for dep in &deps {
                         if dep.version.is_empty() {
                             continue;

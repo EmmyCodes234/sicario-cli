@@ -139,23 +139,30 @@ impl OsvImporter {
             },
         };
 
+        // Enforce a hard 2-second timeout — zero-exfiltration guarantee: network
+        // failures must never block or hang the scan pipeline.
         let client = reqwest::blocking::Client::builder()
-            .timeout(std::time::Duration::from_secs(15))
+            .timeout(std::time::Duration::from_secs(2))
+            .connect_timeout(std::time::Duration::from_secs(2))
             .build()
             .context("Failed to build HTTP client")?;
 
-        let response = client
+        let response = match client
             .post(OSV_QUERY_URL)
             .header("Content-Type", "application/json")
             .header("User-Agent", "sicario-cli")
             .json(&request_body)
             .send()
-            .with_context(|| {
-                format!(
-                    "Failed to query OSV for {}/{}@{}",
-                    ecosystem, package_name, version
-                )
-            })?;
+        {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    "OSV query timed out or failed for {}/{}@{} (scan unaffected): {}",
+                    ecosystem, package_name, version, e
+                );
+                return Ok(0);
+            }
+        };
 
         if !response.status().is_success() {
             anyhow::bail!(
@@ -218,8 +225,22 @@ impl OsvImporter {
     pub fn import_ecosystem(&self, ecosystem: &str) -> Result<usize> {
         let url = format!("{}/{}/all.zip", OSV_BASE_URL, ecosystem);
 
-        let response = reqwest::blocking::get(&url)
-            .with_context(|| format!("Failed to download OSV data for {}", ecosystem))?;
+        let client = reqwest::blocking::Client::builder()
+            .timeout(std::time::Duration::from_secs(2))
+            .connect_timeout(std::time::Duration::from_secs(2))
+            .build()
+            .context("Failed to build HTTP client")?;
+
+        let response = match client.get(&url).send() {
+            Ok(r) => r,
+            Err(e) => {
+                tracing::warn!(
+                    "OSV bulk download timed out or failed for {} (scan unaffected): {}",
+                    ecosystem, e
+                );
+                return Ok(0);
+            }
+        };
 
         if !response.status().is_success() {
             anyhow::bail!(

@@ -185,6 +185,11 @@ fn handle_connection(
 /// Parse and dispatch a single JSON-RPC request line.
 ///
 /// Returns the serialised JSON-RPC response string.
+/// Exposed as `pub` so the stdio MCP runner can reuse this logic.
+pub fn dispatch_request(raw: &str, engine: &Arc<Mutex<SastEngine>>, memory: &Arc<AssistantMemory>) -> String {
+    dispatch(raw, engine, memory)
+}
+
 fn dispatch(raw: &str, engine: &Arc<Mutex<SastEngine>>, memory: &Arc<AssistantMemory>) -> String {
     // Parse the request
     let request = match parse_request(raw) {

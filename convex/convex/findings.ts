@@ -208,6 +208,7 @@ export const listAdvanced = query({
     reachable: v.optional(v.boolean()),
     scanId: v.optional(v.string()),
     owaspCategory: v.optional(v.string()),
+    projectId: v.optional(v.string()),
     sortBy: v.optional(v.string()),
     sortOrder: v.optional(v.string()),
     cursor: v.optional(v.number()),
@@ -244,6 +245,7 @@ export const listAdvanced = query({
       if (args.reachable !== undefined && f.reachable !== args.reachable) return false;
       if (args.scanId && f.scanId !== args.scanId) return false;
       if (args.owaspCategory && f.owaspCategory !== args.owaspCategory) return false;
+      if (args.projectId && f.projectId !== args.projectId) return false;
       if (args.search) {
         const term = args.search.toLowerCase();
         const inRuleId = f.ruleId.toLowerCase().includes(term);

@@ -199,6 +199,92 @@ export const getByApiKey = query({
   },
 });
 
+// ---------------------------------------------------------------------------
+// Zero-Exfil mutations
+// ---------------------------------------------------------------------------
+
+/** Delete all findings and scans for a project. Requires "manager" role. */
+export const purgeTelemetry = mutation({
+  args: {
+    projectId: v.string(),
+    userId: v.string(),
+    orgId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, args.userId, args.orgId, "manager");
+
+    const findings = await ctx.db
+      .query("findings")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    await Promise.all(findings.map((f) => ctx.db.delete(f._id)));
+
+    const scans = await ctx.db
+      .query("scans")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    await Promise.all(scans.map((s) => ctx.db.delete(s._id)));
+  },
+});
+
+/** Delete a project and all its findings/scans. Requires "admin" role. Idempotent. */
+export const deleteProject = mutation({
+  args: {
+    projectId: v.string(),
+    userId: v.string(),
+    orgId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, args.userId, args.orgId, "admin");
+
+    // Purge findings and scans first
+    const findings = await ctx.db
+      .query("findings")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    await Promise.all(findings.map((f) => ctx.db.delete(f._id)));
+
+    const scans = await ctx.db
+      .query("scans")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .collect();
+    await Promise.all(scans.map((s) => ctx.db.delete(s._id)));
+
+    // Delete the project record (idempotent — no-op if not found)
+    const project = await ctx.db
+      .query("projects")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .first();
+    if (!project) return;
+    await ctx.db.delete(project._id);
+  },
+});
+
+/** Save Slack alerting configuration for a project. Requires "manager" role. */
+export const updateAlertingConfig = mutation({
+  args: {
+    projectId: v.string(),
+    userId: v.string(),
+    orgId: v.string(),
+    slackWebhookUrl: v.string(),
+    slackAlertSeverityThreshold: v.string(),
+  },
+  handler: async (ctx, args) => {
+    await requireRole(ctx, args.userId, args.orgId, "manager");
+
+    const project = await ctx.db
+      .query("projects")
+      .withIndex("by_projectId", (q) => q.eq("projectId", args.projectId))
+      .first();
+    if (!project) throw new Error("Project not found");
+
+    await ctx.db.patch(project._id, {
+      slackWebhookUrl: args.slackWebhookUrl,
+      slackAlertSeverityThreshold: args.slackAlertSeverityThreshold,
+    });
+  },
+});
+
 /** Rotate the project API key. Returns the new key. */
 export const regenerateApiKey = mutation({
   args: {

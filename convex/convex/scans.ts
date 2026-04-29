@@ -214,6 +214,7 @@ export const list = query({
       language_breakdown: s.languageBreakdown,
       tags: s.tags,
       findings_count: countByScanId[s.scanId] ?? 0,
+      project_id: s.projectId ?? null,
     }));
 
     return { page, per_page: perPage, total, items };
