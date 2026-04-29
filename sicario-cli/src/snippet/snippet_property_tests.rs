@@ -22,8 +22,7 @@ mod tests {
 
     /// Generate random file content as 1–50 lines of 0–500 chars each.
     fn arb_file_content() -> impl Strategy<Value = String> {
-        proptest::collection::vec(arb_line(), 1..=50)
-            .prop_map(|lines| lines.join("\n"))
+        proptest::collection::vec(arb_line(), 1..=50).prop_map(|lines| lines.join("\n"))
     }
 
     // ── Property 2: Snippet Line Truncation Invariant ────────────────────────

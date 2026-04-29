@@ -41,9 +41,7 @@ impl FixArgs {
     /// precedence. Returns an error string if the value is 0.
     pub fn resolve_max_iterations(&self) -> Result<u32, String> {
         if self.max_iterations == 0 {
-            return Err(
-                "Invalid --max-iterations value: must be at least 1".to_string(),
-            );
+            return Err("Invalid --max-iterations value: must be at least 1".to_string());
         }
         Ok(self.max_iterations)
     }

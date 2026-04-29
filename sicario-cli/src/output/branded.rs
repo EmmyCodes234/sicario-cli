@@ -89,7 +89,14 @@ impl ScanSummary {
         files_ignored: usize,
         rules_loaded: usize,
     ) -> Self {
-        Self::from_vulns_full(vulns, scan_duration, files_scanned, files_ignored, rules_loaded, Severity::Low)
+        Self::from_vulns_full(
+            vulns,
+            scan_duration,
+            files_scanned,
+            files_ignored,
+            rules_loaded,
+            Severity::Low,
+        )
     }
 
     /// Build a summary with all options, including the active minimum severity filter.

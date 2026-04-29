@@ -186,7 +186,11 @@ fn handle_connection(
 ///
 /// Returns the serialised JSON-RPC response string.
 /// Exposed as `pub` so the stdio MCP runner can reuse this logic.
-pub fn dispatch_request(raw: &str, engine: &Arc<Mutex<SastEngine>>, memory: &Arc<AssistantMemory>) -> String {
+pub fn dispatch_request(
+    raw: &str,
+    engine: &Arc<Mutex<SastEngine>>,
+    memory: &Arc<AssistantMemory>,
+) -> String {
     dispatch(raw, engine, memory)
 }
 
@@ -407,10 +411,7 @@ fn handle_get_ast_node(
 
     // line_number is 1-indexed; tree-sitter uses 0-indexed rows
     if line_number == 0 {
-        return serialize_error(
-            id,
-            JsonRpcError::invalid_params("line_number must be >= 1"),
-        );
+        return serialize_error(id, JsonRpcError::invalid_params("line_number must be >= 1"));
     }
     let row = line_number - 1;
 

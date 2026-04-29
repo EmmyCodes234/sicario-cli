@@ -91,7 +91,11 @@ mod tests {
     fn test_is_dangerous_method_safe_names() {
         assert!(!ShellExecutionGuard::is_dangerous_method("scan_file"));
         assert!(!ShellExecutionGuard::is_dangerous_method("get_rules"));
-        assert!(!ShellExecutionGuard::is_dangerous_method("analyze_reachability"));
-        assert!(!ShellExecutionGuard::is_dangerous_method("propose_safe_mutation"));
+        assert!(!ShellExecutionGuard::is_dangerous_method(
+            "analyze_reachability"
+        ));
+        assert!(!ShellExecutionGuard::is_dangerous_method(
+            "propose_safe_mutation"
+        ));
     }
 }

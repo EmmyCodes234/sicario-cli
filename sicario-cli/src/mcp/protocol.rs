@@ -139,11 +139,20 @@ pub enum McpMethod {
     /// Return all loaded security rules.
     GetRules,
     /// Return the AST node at a specific file location.
-    GetAstNode { file_path: String, line_number: usize },
+    GetAstNode {
+        file_path: String,
+        line_number: usize,
+    },
     /// Analyze reachability between two function nodes.
-    AnalyzeReachability { source_node: String, sink_node: String },
+    AnalyzeReachability {
+        source_node: String,
+        sink_node: String,
+    },
     /// Propose a safe AST-level mutation for developer review (never auto-applied).
-    ProposeSafeMutation { node_id: String, patched_syntax: String },
+    ProposeSafeMutation {
+        node_id: String,
+        patched_syntax: String,
+    },
 }
 
 /// Response payload variants.

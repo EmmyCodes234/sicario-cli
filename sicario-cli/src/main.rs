@@ -21,8 +21,8 @@ mod baseline;
 mod benchmark;
 mod cache;
 mod cli;
-mod config;
 mod confidence;
+mod config;
 mod diff;
 mod hook;
 mod key_manager;
@@ -329,22 +329,20 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
                         let bg_dep_tuples = dep_tuples.clone();
                         std::thread::spawn(move || {
                             match VulnerabilityDatabaseManager::new(&bg_cache_dir) {
-                                Ok(bg_db) => {
-                                    match bg_db.refresh_if_stale(&bg_dep_tuples) {
-                                        Ok(count) => {
-                                            tracing::debug!(
-                                                "SCA background cache refresh: {} records updated",
-                                                count
-                                            );
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!(
+                                Ok(bg_db) => match bg_db.refresh_if_stale(&bg_dep_tuples) {
+                                    Ok(count) => {
+                                        tracing::debug!(
+                                            "SCA background cache refresh: {} records updated",
+                                            count
+                                        );
+                                    }
+                                    Err(e) => {
+                                        tracing::warn!(
                                                 "SCA background cache refresh failed (scan unaffected): {}",
                                                 e
                                             );
-                                        }
                                     }
-                                }
+                                },
                                 Err(e) => {
                                     tracing::warn!("SCA background db init failed: {}", e);
                                 }
@@ -433,8 +431,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
                     &mut stdout,
                 )?;
             }
-            let summary =
-                ScanSummary::from_vulns_full(&vulns, scan_duration, files_scanned, files_ignored, total_rules, min_severity);
+            let summary = ScanSummary::from_vulns_full(
+                &vulns,
+                scan_duration,
+                files_scanned,
+                files_ignored,
+                total_rules,
+                min_severity,
+            );
             print_scan_summary(
                 &summary,
                 formatter_config.unicode_enabled,
@@ -473,7 +477,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         for v in &vulns {
             render_finding_text(v, &formatter_config, &mut buf)?;
         }
-        let summary = ScanSummary::from_vulns_full(&vulns, scan_duration, files_scanned, files_ignored, total_rules, min_severity);
+        let summary = ScanSummary::from_vulns_full(
+            &vulns,
+            scan_duration,
+            files_scanned,
+            files_ignored,
+            total_rules,
+            min_severity,
+        );
         print_scan_summary(
             &summary, false, // no unicode in file output
             false, // no color in file output
@@ -498,7 +509,14 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 
     // Auto-publish to Sicario Cloud via telemetry endpoint if --publish flag is set
     if args.publish {
-        submit_telemetry(&vulns, scan_duration, rules_loaded, files_scanned, args.org.clone(), args.publish_all);
+        submit_telemetry(
+            &vulns,
+            scan_duration,
+            rules_loaded,
+            files_scanned,
+            args.org.clone(),
+            args.publish_all,
+        );
     }
 
     // Compute exit code
@@ -550,7 +568,10 @@ fn submit_telemetry(
     org_id: Option<String>,
     publish_all: bool,
 ) {
-    use publish::{collect_git_metadata, resolve_cloud_url, TelemetryClient, TelemetryFinding, TelemetryPayload};
+    use publish::{
+        collect_git_metadata, resolve_cloud_url, TelemetryClient, TelemetryFinding,
+        TelemetryPayload,
+    };
 
     // ── Telemetry severity gate ───────────────────────────────────────────
     // Default: only publish Medium and above to prevent Low/Info noise from
@@ -680,7 +701,11 @@ fn submit_telemetry(
         repository_url,
         commit_sha,
         scan_id: scan_id.clone(),
-        branch: if branch.is_empty() { None } else { Some(branch) },
+        branch: if branch.is_empty() {
+            None
+        } else {
+            Some(branch)
+        },
         pr_number,
         duration_ms: Some(scan_duration.as_millis() as u64),
         rules_loaded: Some(rules_loaded),
@@ -699,7 +724,10 @@ fn submit_telemetry(
 
     match client.submit(&payload) {
         Ok(resp) => {
-            eprintln!("Scan published to Sicario Cloud (scan ID: {}).", resp.scan_id);
+            eprintln!(
+                "Scan published to Sicario Cloud (scan ID: {}).",
+                resp.scan_id
+            );
             if let Some(url) = resp.dashboard_url {
                 eprintln!("  Dashboard: {url}");
             }
@@ -1306,10 +1334,10 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
                         if guard.record_failure(reason).is_err() {
                             // Iteration cap reached — log diagnostic and block CI
                             let file_str = vuln.file_path.to_string_lossy();
-                            if let Err(log_err) =
-                                guard.flush_trace_log(&vuln.rule_id, &file_str)
-                            {
-                                eprintln!("sicario: warning — could not write trace log: {log_err}");
+                            if let Err(log_err) = guard.flush_trace_log(&vuln.rule_id, &file_str) {
+                                eprintln!(
+                                    "sicario: warning — could not write trace log: {log_err}"
+                                );
                             }
                             eprintln!(
                                 "sicario: error — could not produce a valid fix for {} in {} \
@@ -1512,7 +1540,9 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
                 }
                 None => {
                     println!("  Not configured. Run `sicario config set ANTHROPIC_API_KEY <key>`");
-                    println!("  or set the ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable.");
+                    println!(
+                        "  or set the ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable."
+                    );
                 }
             }
 

@@ -17,9 +17,7 @@ pub struct LinkArgs {
 /// Writes the project ID to `~/.sicario/config.toml` under key `project_id`.
 pub fn cmd_link(args: LinkArgs) -> Result<()> {
     let project_id = args.project.ok_or_else(|| {
-        anyhow::anyhow!(
-            "Project ID is required. Use `sicario link --project=<PROJECT_ID>`"
-        )
+        anyhow::anyhow!("Project ID is required. Use `sicario link --project=<PROJECT_ID>`")
     })?;
 
     // Write to global config (~/.sicario/config.toml)
@@ -32,8 +30,7 @@ pub fn cmd_link(args: LinkArgs) -> Result<()> {
     }
 
     // Load existing config or start fresh
-    let mut config = crate::config::global_config::load_global_config()
-        .unwrap_or_default();
+    let mut config = crate::config::global_config::load_global_config().unwrap_or_default();
 
     // Store project_id in extra fields (since GlobalConfig doesn't have a project_id field)
     config.extra.insert(

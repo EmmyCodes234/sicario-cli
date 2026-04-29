@@ -158,7 +158,10 @@ impl OsvImporter {
             Err(e) => {
                 tracing::warn!(
                     "OSV query timed out or failed for {}/{}@{} (scan unaffected): {}",
-                    ecosystem, package_name, version, e
+                    ecosystem,
+                    package_name,
+                    version,
+                    e
                 );
                 return Ok(0);
             }
@@ -236,7 +239,8 @@ impl OsvImporter {
             Err(e) => {
                 tracing::warn!(
                     "OSV bulk download timed out or failed for {} (scan unaffected): {}",
-                    ecosystem, e
+                    ecosystem,
+                    e
                 );
                 return Ok(0);
             }

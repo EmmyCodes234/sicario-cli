@@ -381,7 +381,8 @@ impl AuthModule {
                     self.token_store.store_cloud_token(&s.access_token)?;
 
                     // Fetch user info to show "Authenticated as:"
-                    let whoami_url = format!("{}/api/v1/whoami", cloud_auth_url.trim_end_matches('/'));
+                    let whoami_url =
+                        format!("{}/api/v1/whoami", cloud_auth_url.trim_end_matches('/'));
                     if let Ok(whoami_resp) = reqwest::blocking::Client::new()
                         .get(&whoami_url)
                         .header("Authorization", format!("Bearer {}", s.access_token))
@@ -390,9 +391,16 @@ impl AuthModule {
                     {
                         if whoami_resp.status().is_success() {
                             if let Ok(info) = whoami_resp.json::<serde_json::Value>() {
-                                let user = info.get("username").and_then(|v| v.as_str()).unwrap_or("unknown");
-                                let email = info.get("email").and_then(|v| v.as_str()).unwrap_or("");
-                                let org = info.get("organization").and_then(|v| v.as_str()).unwrap_or("personal");
+                                let user = info
+                                    .get("username")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown");
+                                let email =
+                                    info.get("email").and_then(|v| v.as_str()).unwrap_or("");
+                                let org = info
+                                    .get("organization")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("personal");
                                 if !email.is_empty() {
                                     eprintln!("  Authenticated as: {} ({})", user, email);
                                 } else {

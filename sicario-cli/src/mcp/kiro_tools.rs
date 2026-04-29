@@ -105,10 +105,7 @@ pub struct TelemetryAuditResponse {
 /// Dispatch a Kiro tool call and return the serialised JSON-RPC response.
 ///
 /// This is the entry point for all three Kiro Power tools.
-pub fn dispatch_kiro_tool(
-    raw: &str,
-    engine: &Arc<Mutex<SastEngine>>,
-) -> Option<String> {
+pub fn dispatch_kiro_tool(raw: &str, engine: &Arc<Mutex<SastEngine>>) -> Option<String> {
     // Parse the raw JSON-RPC request
     let rpc: JsonRpcRequest = match serde_json::from_str(raw) {
         Ok(r) => r,
@@ -118,15 +115,9 @@ pub fn dispatch_kiro_tool(
     let id = rpc.id.clone();
 
     match rpc.method.as_str() {
-        "analyze_ast_security" => {
-            Some(handle_analyze_ast_security(rpc.params, id, engine))
-        }
-        "request_remediation_patch" => {
-            Some(handle_request_remediation_patch(rpc.params, id))
-        }
-        "log_telemetry_audit" => {
-            Some(handle_log_telemetry_audit(rpc.params, id))
-        }
+        "analyze_ast_security" => Some(handle_analyze_ast_security(rpc.params, id, engine)),
+        "request_remediation_patch" => Some(handle_request_remediation_patch(rpc.params, id)),
+        "log_telemetry_audit" => Some(handle_log_telemetry_audit(rpc.params, id)),
         _ => None, // Not a Kiro tool, let the main dispatcher handle it
     }
 }
@@ -160,9 +151,7 @@ fn handle_analyze_ast_security(
     if p.file_path.contains("..") {
         return json_rpc_error(
             id,
-            JsonRpcError::invalid_params(
-                "Path traversal detected: file paths cannot contain '..'",
-            ),
+            JsonRpcError::invalid_params("Path traversal detected: file paths cannot contain '..'"),
         );
     }
 
@@ -256,9 +245,7 @@ fn handle_request_remediation_patch(
     if p.file_path.contains("..") {
         return json_rpc_error(
             id,
-            JsonRpcError::invalid_params(
-                "Path traversal detected: file paths cannot contain '..'",
-            ),
+            JsonRpcError::invalid_params("Path traversal detected: file paths cannot contain '..'"),
         );
     }
 
@@ -313,10 +300,7 @@ fn handle_request_remediation_patch(
 ///
 /// Fires an asynchronous telemetry payload containing ONLY metadata (no source code)
 /// to the Convex backend. The submission is best-effort and never fails the scan.
-fn handle_log_telemetry_audit(
-    params: serde_json::Value,
-    id: Option<serde_json::Value>,
-) -> String {
+fn handle_log_telemetry_audit(params: serde_json::Value, id: Option<serde_json::Value>) -> String {
     // Parse parameters
     let p: TelemetryAuditParams = match serde_json::from_value(params) {
         Ok(p) => p,
@@ -372,8 +356,8 @@ fn handle_log_telemetry_audit(
     });
 
     // Resolve dashboard URL
-    let cloud_url = std::env::var("SICARIO_CLOUD_URL")
-        .unwrap_or_else(|_| "https://usesicario.xyz".to_string());
+    let cloud_url =
+        std::env::var("SICARIO_CLOUD_URL").unwrap_or_else(|_| "https://usesicario.xyz".to_string());
     let dashboard_url = if !api_key.is_empty() {
         Some(format!(
             "{}/dashboard/projects/{}/scans/{}",
@@ -507,9 +491,7 @@ mod tests {
     #[test]
     fn test_analyze_ast_security_path_traversal() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"analyze_ast_security","params":{"file_path":"../../etc/shadow"},"id":1}"#;
         let result = dispatch_kiro_tool(raw, &engine).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -524,9 +506,7 @@ mod tests {
     #[test]
     fn test_analyze_ast_security_missing_file() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"analyze_ast_security","params":{"file_path":"/nonexistent/file.js"},"id":2}"#;
         let result = dispatch_kiro_tool(raw, &engine).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -539,9 +519,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("test.js");
         std::fs::write(&file, "const x = 1;").unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = format!(
             r#"{{"jsonrpc":"2.0","method":"analyze_ast_security","params":{{"file_path":"{}"}},"id":3}}"#,
             file.to_string_lossy().replace('\\', "/")
@@ -556,9 +534,7 @@ mod tests {
     #[test]
     fn test_request_remediation_patch_path_traversal() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"request_remediation_patch","params":{"vulnerability_id":"abc","file_path":"../../etc/passwd"},"id":4}"#;
         let result = dispatch_kiro_tool(raw, &engine).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -571,9 +547,7 @@ mod tests {
         let dir = TempDir::new().unwrap();
         let file = dir.path().join("vuln.py");
         std::fs::write(&file, "cursor.execute(query)").unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = format!(
             r#"{{"jsonrpc":"2.0","method":"request_remediation_patch","params":{{"vulnerability_id":"vuln-123","file_path":"{}"}},"id":5}}"#,
             file.to_string_lossy().replace('\\', "/")
@@ -588,9 +562,7 @@ mod tests {
     #[test]
     fn test_log_telemetry_audit_empty_project_id() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"log_telemetry_audit","params":{"project_id":"","scan_results":[]},"id":6}"#;
         let result = dispatch_kiro_tool(raw, &engine).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
@@ -601,24 +573,23 @@ mod tests {
     #[test]
     fn test_log_telemetry_audit_valid() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"log_telemetry_audit","params":{"project_id":"proj_abc","scan_results":[{"rule_id":"sql-injection","severity":"High","file_path":"src/db.py","line":42}]},"id":7}"#;
         let result = dispatch_kiro_tool(raw, &engine).unwrap();
         let v: serde_json::Value = serde_json::from_str(&result).unwrap();
         assert_eq!(v["jsonrpc"], "2.0");
         assert_eq!(v["result"]["findings_count"], 1);
         assert_eq!(v["result"]["status"], "submitted");
-        assert!(v["result"]["scan_id"].as_str().unwrap().starts_with("mcp-scan-"));
+        assert!(v["result"]["scan_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("mcp-scan-"));
     }
 
     #[test]
     fn test_dispatch_returns_none_for_unknown_tool() {
         let dir = TempDir::new().unwrap();
-        let engine = Arc::new(Mutex::new(
-            SastEngine::new(dir.path()).unwrap(),
-        ));
+        let engine = Arc::new(Mutex::new(SastEngine::new(dir.path()).unwrap()));
         let raw = r#"{"jsonrpc":"2.0","method":"scan_file","params":{"path":"test.js"},"id":8}"#;
         // scan_file is handled by the main dispatcher, not kiro_tools
         let result = dispatch_kiro_tool(raw, &engine);
@@ -772,13 +743,13 @@ pub struct StdioMcpRunner;
 impl StdioMcpRunner {
     /// Start the stdio MCP server. Blocks until stdin is closed.
     pub fn run() -> anyhow::Result<()> {
-        use std::io::{self, BufRead, BufReader, Write};
         use crate::mcp::assistant_memory::AssistantMemory;
         use crate::mcp::server::dispatch_request;
+        use std::io::{self, BufRead, BufReader, Write};
 
         // Determine project root (current directory)
-        let project_root = std::env::current_dir()
-            .unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let project_root =
+            std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
         let memory_db_path = project_root.join(".sicario").join("mcp_memory.db");
 
         // Ensure .sicario directory exists
@@ -819,19 +790,24 @@ impl StdioMcpRunner {
             match AssistantMemory::new(&mem_path) {
                 Ok(m) => Arc::new(m),
                 Err(e) => {
-                    eprintln!("sicario mcp: warning: could not initialise memory store: {}", e);
+                    eprintln!(
+                        "sicario mcp: warning: could not initialise memory store: {}",
+                        e
+                    );
                     // Create a fallback in-memory store via temp file
-                    let fallback = std::env::temp_dir().join(format!(
-                        "sicario_mcp_{}.db",
-                        uuid::Uuid::new_v4().simple()
-                    ));
-                    Arc::new(AssistantMemory::new(&fallback)
-                        .map_err(|e2| anyhow::anyhow!("Failed to create fallback memory: {}", e2))?)
+                    let fallback = std::env::temp_dir()
+                        .join(format!("sicario_mcp_{}.db", uuid::Uuid::new_v4().simple()));
+                    Arc::new(AssistantMemory::new(&fallback).map_err(|e2| {
+                        anyhow::anyhow!("Failed to create fallback memory: {}", e2)
+                    })?)
                 }
             }
         };
 
-        eprintln!("sicario mcp: stdio server ready (project: {})", project_root.display());
+        eprintln!(
+            "sicario mcp: stdio server ready (project: {})",
+            project_root.display()
+        );
 
         let stdin = io::stdin();
         let mut stdout = io::stdout();

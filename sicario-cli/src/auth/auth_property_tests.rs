@@ -453,10 +453,7 @@ mod prop4_auth_priority_chain {
 
     /// Strategy for an optional credential: Some(value) or None.
     fn arb_opt_cred() -> impl Strategy<Value = Option<String>> {
-        prop_oneof![
-            Just(None),
-            arb_cred().prop_map(Some),
-        ]
+        prop_oneof![Just(None), arb_cred().prop_map(Some),]
     }
 
     // ── Property 4a: Highest-priority credential is always selected ───────────
@@ -740,7 +737,8 @@ mod prop4_auth_priority_chain {
             Some("key3"),
             Some("key4"),
             Some("key5"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r, "Bearer project:key1");
     }
 
@@ -752,13 +750,15 @@ mod prop4_auth_priority_chain {
             Some("key3"),
             Some("key4"),
             Some("key5"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r, "Bearer oauth_tok");
     }
 
     #[test]
     fn unit_priority_3_beats_4_5() {
-        let r = resolve_auth_token_pure(None, None, Some("key3"), Some("key4"), Some("key5")).unwrap();
+        let r =
+            resolve_auth_token_pure(None, None, Some("key3"), Some("key4"), Some("key5")).unwrap();
         assert_eq!(r, "Bearer project:key3");
     }
 
@@ -786,12 +786,13 @@ mod prop4_auth_priority_chain {
     fn unit_empty_string_credentials_are_skipped() {
         // Empty strings must be treated as absent (same as None)
         let r = resolve_auth_token_pure(
-            Some(""),   // empty → skip
-            Some(""),   // empty → skip
-            Some(""),   // empty → skip
-            Some(""),   // empty → skip
+            Some(""), // empty → skip
+            Some(""), // empty → skip
+            Some(""), // empty → skip
+            Some(""), // empty → skip
             Some("key5"),
-        ).unwrap();
+        )
+        .unwrap();
         assert_eq!(r, "Bearer project:key5");
     }
 }

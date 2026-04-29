@@ -10,4 +10,6 @@ pub use client::{
     collect_git_metadata, resolve_cloud_url, PublishClient, PublishResponse, ScanMetadata,
     ScanReport,
 };
-pub use telemetry_client::{TelemetryClient, TelemetryFinding, TelemetryPayload, TelemetryResponse};
+pub use telemetry_client::{
+    TelemetryClient, TelemetryFinding, TelemetryPayload, TelemetryResponse,
+};

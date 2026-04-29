@@ -135,11 +135,7 @@ impl StdioMcpServer {
     }
 
     /// Execute the MCP method and return the serialised response.
-    fn handle_method(
-        &self,
-        method: McpMethod,
-        id: Option<serde_json::Value>,
-    ) -> String {
+    fn handle_method(&self, method: McpMethod, id: Option<serde_json::Value>) -> String {
         match method {
             McpMethod::ScanFile { path } => self.handle_scan_file(path, id),
             McpMethod::ScanCode { code, language } => self.handle_scan_code(code, language, id),
@@ -351,10 +347,7 @@ impl StdioMcpServer {
 
         // line_number is 1-indexed; tree-sitter uses 0-indexed rows
         if line_number == 0 {
-            return serialize_error(
-                id,
-                JsonRpcError::invalid_params("line_number must be >= 1"),
-            );
+            return serialize_error(id, JsonRpcError::invalid_params("line_number must be >= 1"));
         }
         let row = line_number - 1;
 
@@ -631,7 +624,8 @@ mod tests {
     fn test_dispatch_scan_file_path_traversal() {
         let dir = TempDir::new().unwrap();
         let server = make_server(dir.path());
-        let raw = r#"{"jsonrpc":"2.0","method":"scan_file","params":{"path":"../../etc/shadow"},"id":3}"#;
+        let raw =
+            r#"{"jsonrpc":"2.0","method":"scan_file","params":{"path":"../../etc/shadow"},"id":3}"#;
         let resp = server.dispatch(raw);
         let v: serde_json::Value = serde_json::from_str(&resp).unwrap();
         assert!(v["error"].is_object());
