@@ -236,4 +236,17 @@ export default defineSchema({
     createdAt: v.string(),
     updatedAt: v.string(),
   }).index("by_userId", ["userId"]),
+
+  // ── Release distribution ──────────────────────────────────────────────────
+  releases: defineTable({
+    version: v.string(),       // e.g. "v0.1.9"
+    platform: v.string(),      // "linux-x64-musl" | "linux-x64" | "macos-aarch64" | "macos-x64" | "windows-x64"
+    storageId: v.id("_storage"),
+    checksum: v.string(),      // SHA-256 hex string
+    fileSize: v.optional(v.number()), // bytes
+    isActive: v.boolean(),
+    createdAt: v.string(),
+  })
+    .index("by_platform_and_active", ["platform", "isActive"])
+    .index("by_version", ["version"]),
 });

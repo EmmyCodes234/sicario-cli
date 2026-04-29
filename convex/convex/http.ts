@@ -766,6 +766,78 @@ http.route({
   }),
 });
 
+// ── GET /download/latest/:platform — Stream binary from Convex File Storage ─
+// Supported platform slugs:
+//   linux-x64-musl | linux-x64 | macos-aarch64 | macos-x64 | windows-x64
+http.route({
+  pathPrefix: "/download/latest/",
+  method: "GET",
+  handler: httpAction(async (ctx, request) => {
+    const url = new URL(request.url);
+    // Extract platform from path: /download/latest/<platform>
+    const platform = url.pathname.replace(/^\/download\/latest\//, "").trim();
+
+    if (!platform) {
+      return new Response(JSON.stringify({ error: "Platform is required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Look up the active release for this platform
+    const releases = await ctx.runQuery(api.releases.getActiveReleases, {});
+    const release = releases.find((r: any) => r.platform === platform);
+
+    if (!release) {
+      return new Response(
+        JSON.stringify({ error: `No active release found for platform: ${platform}` }),
+        { status: 404, headers: { "Content-Type": "application/json" } }
+      );
+    }
+
+    // Fetch the file blob from Convex File Storage
+    const blob = await ctx.storage.get(release.storageId as any);
+    if (!blob) {
+      return new Response(JSON.stringify({ error: "File not found in storage" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Determine filename
+    const isWindows = platform.includes("windows");
+    const ext = isWindows ? ".exe" : "";
+    const filename = `sicario-${platform}-${release.version}${ext}`;
+
+    return new Response(blob, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/octet-stream",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "X-Sicario-Version": release.version,
+        "X-Sicario-Checksum": release.checksum,
+        "Cache-Control": "public, max-age=3600",
+        "Access-Control-Allow-Origin": "*",
+      },
+    });
+  }),
+});
+
+http.route({
+  pathPrefix: "/download/latest/",
+  method: "OPTIONS",
+  handler: httpAction(async () => {
+    return new Response(null, {
+      status: 204,
+      headers: {
+        "Access-Control-Allow-Origin": "*",
+        "Access-Control-Allow-Methods": "GET, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+      },
+    });
+  }),
+});
+
 // ── OPTIONS preflight for all API routes ────────────────────────────────────
 http.route({
   path: "/api/v1/scans",
