@@ -50,18 +50,33 @@ struct ChatResponse {
     choices: Vec<ChatChoice>,
 }
 
-// ── System prompt ─────────────────────────────────────────────────────────────
+// ── System prompt (XML protocol) ──────────────────────────────────────────────
 
-const SECURITY_FIX_SYSTEM_PROMPT: &str = r#"You are an expert security engineer specializing in code remediation.
-Your task is to generate a minimal, correct security fix for the provided vulnerability.
+/// System prompt that enforces the XML output protocol.
+///
+/// The model MUST wrap its reasoning in <scratchpad> and the exact replacement
+/// code in <sicario_patch>. This makes extraction deterministic regardless of
+/// how the model formats prose or commentary.
+const SECURITY_FIX_SYSTEM_PROMPT: &str = r#"You are an expert security engineer specializing in minimal, surgical code remediation.
 
-Rules:
-1. Return ONLY the fixed code — no explanations, no markdown fences, no commentary.
-2. Preserve the original code style, indentation, and surrounding logic.
-3. Make the smallest change necessary to eliminate the vulnerability.
-4. The fix must be syntactically valid for the specified language.
-5. Do not introduce new dependencies unless absolutely necessary.
-6. If the fix requires a parameterized query, use the idiomatic approach for the language/framework."#;
+OUTPUT FORMAT — MANDATORY:
+You MUST respond using EXACTLY this XML structure and nothing else outside it:
+
+<scratchpad>
+Brief analysis: what the vulnerability is and what the minimal fix is.
+</scratchpad>
+<sicario_patch>
+EXACT replacement code here — raw source only, no markdown, no fences, no commentary
+</sicario_patch>
+
+RULES:
+1. The <sicario_patch> block contains ONLY the raw replacement lines for the vulnerable code shown.
+2. Do NOT wrap code in backticks or markdown fences inside <sicario_patch>.
+3. Do NOT include the entire file — only the lines that replace the vulnerable snippet.
+4. Preserve original indentation exactly.
+5. Make the smallest change that eliminates the vulnerability.
+6. The replacement must be syntactically valid for the specified language.
+7. Do not introduce new dependencies unless absolutely necessary."#;
 
 // ── Provider-agnostic client ──────────────────────────────────────────────────
 
@@ -141,11 +156,19 @@ impl LlmClient {
         }
     }
 
-    /// Generate a security fix for the given context using the LLM.
+    /// Generate a security fix using the XML protocol.
     ///
-    /// Returns the raw fixed code string as returned by the model.
-    /// Callers are responsible for syntax validation before applying.
-    pub async fn generate_fix(&self, context: &FixContext) -> Result<String> {
+    /// Returns the raw LLM response string. Callers must call
+    /// `extract_patch()` to pull the code out of `<sicario_patch>` tags.
+    ///
+    /// Accepts an optional `extra_context` string that is appended to the
+    /// user prompt — used by the retry loop to feed back syntax/security
+    /// errors from previous attempts.
+    pub async fn generate_fix_xml(
+        &self,
+        context: &FixContext,
+        extra_context: Option<&str>,
+    ) -> Result<String> {
         let api_key = self.api_key.as_deref().ok_or_else(|| {
             anyhow!(
                 "No LLM API key configured.\n\n\
@@ -163,7 +186,7 @@ impl LlmClient {
             )
         })?;
 
-        let user_prompt = build_user_prompt(context);
+        let user_prompt = build_user_prompt(context, extra_context);
 
         let request = ChatRequest {
             model: self.model.clone(),
@@ -183,8 +206,6 @@ impl LlmClient {
 
         let mut req_builder = self.client.post(&self.endpoint).json(&request);
 
-        // Only send auth header if we have a key (Ollama/local models don't need one,
-        // but we still need to handle the case where endpoint doesn't require auth)
         if !api_key.is_empty() {
             req_builder = req_builder.bearer_auth(api_key);
         }
@@ -217,6 +238,15 @@ impl LlmClient {
             .map(|c| c.message.content.trim().to_string())
             .ok_or_else(|| anyhow!("LLM API returned no choices"))
     }
+
+    /// Legacy method kept for backward compatibility with existing tests.
+    /// New code should use `generate_fix_xml` + `extract_patch`.
+    pub async fn generate_fix(&self, context: &FixContext) -> Result<String> {
+        let raw = self.generate_fix_xml(context, None).await?;
+        // Try to extract a patch; fall back to the raw response so old callers
+        // still get something usable.
+        Ok(extract_patch(&raw).unwrap_or(raw))
+    }
 }
 
 impl Default for LlmClient {
@@ -225,9 +255,38 @@ impl Default for LlmClient {
     }
 }
 
+// ── XML patch extraction ──────────────────────────────────────────────────────
+
+/// Extract the code between `<sicario_patch>` and `</sicario_patch>` tags.
+///
+/// Returns `Err` if the tags are missing or malformed, so the retry loop
+/// can treat a missing tag as a protocol violation and ask the LLM to retry.
+pub fn extract_patch(llm_response: &str) -> Result<String> {
+    let open_tag = "<sicario_patch>";
+    let close_tag = "</sicario_patch>";
+
+    let start = llm_response
+        .find(open_tag)
+        .ok_or_else(|| anyhow!("LLM response missing <sicario_patch> tag"))?;
+
+    let content_start = start + open_tag.len();
+
+    let end = llm_response[content_start..]
+        .find(close_tag)
+        .ok_or_else(|| anyhow!("LLM response missing </sicario_patch> closing tag"))?;
+
+    let patch = llm_response[content_start..content_start + end].trim();
+
+    if patch.is_empty() {
+        return Err(anyhow!("<sicario_patch> block is empty"));
+    }
+
+    Ok(patch.to_string())
+}
+
 // ── Prompt construction ───────────────────────────────────────────────────────
 
-fn build_user_prompt(context: &FixContext) -> String {
+fn build_user_prompt(context: &FixContext, extra_context: Option<&str>) -> String {
     let mut prompt = String::new();
 
     prompt.push_str(&format!("Language: {}\n", context.file_language));
@@ -245,12 +304,44 @@ fn build_user_prompt(context: &FixContext) -> String {
         context.vulnerability_description
     ));
 
-    prompt.push_str("Vulnerable code:\n```\n");
+    prompt.push_str("Vulnerable code window (replace ONLY the vulnerable lines):\n");
     prompt.push_str(&context.code_snippet);
-    prompt.push_str("\n```\n\n");
-    prompt.push_str("Provide the fixed code:");
+    prompt.push('\n');
+
+    if let Some(extra) = extra_context {
+        prompt.push('\n');
+        prompt.push_str(extra);
+        prompt.push('\n');
+    }
+
+    prompt.push_str(
+        "\nRespond using the required XML format with <scratchpad> and <sicario_patch> tags.",
+    );
 
     prompt
+}
+
+// ── Response post-processing ──────────────────────────────────────────────────
+
+/// Strip markdown code fences from a string.
+///
+/// Used as a last-resort cleanup if the model wraps content inside
+/// `<sicario_patch>` in backtick fences despite instructions.
+pub fn strip_markdown_fences(s: &str) -> String {
+    let trimmed = s.trim();
+    if let Some(fence_start) = trimmed.find("```") {
+        let after_fence = &trimmed[fence_start + 3..];
+        let code_start = after_fence
+            .find('\n')
+            .map(|i| i + 1)
+            .unwrap_or(after_fence.len());
+        let code_body = &after_fence[code_start..];
+        if let Some(close) = code_body.find("```") {
+            return code_body[..close].trim_end().to_string();
+        }
+        return code_body.trim_end().to_string();
+    }
+    trimmed.to_string()
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -279,7 +370,6 @@ mod tests {
     fn test_config_reports_key_source() {
         let client = LlmClient::new().unwrap();
         let config = client.config();
-        // Should always have an endpoint and model, even without a key
         assert!(!config.endpoint.is_empty());
         assert!(!config.model.is_empty());
     }
@@ -287,28 +377,28 @@ mod tests {
     #[test]
     fn test_build_user_prompt_contains_language() {
         let ctx = make_context();
-        let prompt = build_user_prompt(&ctx);
+        let prompt = build_user_prompt(&ctx, None);
         assert!(prompt.contains("Python"));
     }
 
     #[test]
     fn test_build_user_prompt_contains_framework() {
         let ctx = make_context();
-        let prompt = build_user_prompt(&ctx);
+        let prompt = build_user_prompt(&ctx, None);
         assert!(prompt.contains("Django"));
     }
 
     #[test]
     fn test_build_user_prompt_contains_cwe() {
         let ctx = make_context();
-        let prompt = build_user_prompt(&ctx);
+        let prompt = build_user_prompt(&ctx, None);
         assert!(prompt.contains("CWE-89"));
     }
 
     #[test]
     fn test_build_user_prompt_contains_snippet() {
         let ctx = make_context();
-        let prompt = build_user_prompt(&ctx);
+        let prompt = build_user_prompt(&ctx, None);
         assert!(prompt.contains("SELECT * FROM users"));
     }
 
@@ -321,19 +411,78 @@ mod tests {
             framework: None,
             cwe_id: None,
         };
-        let prompt = build_user_prompt(&ctx);
+        let prompt = build_user_prompt(&ctx, None);
         assert!(!prompt.contains("Framework:"));
         assert!(!prompt.contains("CWE:"));
     }
 
+    #[test]
+    fn test_build_user_prompt_with_extra_context() {
+        let ctx = make_context();
+        let prompt = build_user_prompt(&ctx, Some("Previous attempt had a syntax error: missing semicolon"));
+        assert!(prompt.contains("syntax error"));
+    }
+
+    #[test]
+    fn test_extract_patch_valid() {
+        let response = "<scratchpad>analysis</scratchpad>\n<sicario_patch>\ncursor.execute(query, (user_id,))\n</sicario_patch>";
+        let patch = extract_patch(response).unwrap();
+        assert_eq!(patch, "cursor.execute(query, (user_id,))");
+    }
+
+    #[test]
+    fn test_extract_patch_missing_open_tag() {
+        let response = "cursor.execute(query, (user_id,))";
+        assert!(extract_patch(response).is_err());
+        assert!(extract_patch(response).unwrap_err().to_string().contains("<sicario_patch>"));
+    }
+
+    #[test]
+    fn test_extract_patch_missing_close_tag() {
+        let response = "<sicario_patch>cursor.execute(query, (user_id,))";
+        assert!(extract_patch(response).is_err());
+        assert!(extract_patch(response).unwrap_err().to_string().contains("</sicario_patch>"));
+    }
+
+    #[test]
+    fn test_extract_patch_empty_block() {
+        let response = "<sicario_patch>   </sicario_patch>";
+        assert!(extract_patch(response).is_err());
+    }
+
+    #[test]
+    fn test_extract_patch_strips_surrounding_whitespace() {
+        let response = "<sicario_patch>\n\n  const x = safe(input);\n\n</sicario_patch>";
+        let patch = extract_patch(response).unwrap();
+        assert_eq!(patch, "const x = safe(input);");
+    }
+
+    #[test]
+    fn test_extract_patch_multiline() {
+        let response = "<scratchpad>fix</scratchpad>\n<sicario_patch>\nconst a = 1;\nconst b = 2;\n</sicario_patch>";
+        let patch = extract_patch(response).unwrap();
+        assert!(patch.contains("const a = 1;"));
+        assert!(patch.contains("const b = 2;"));
+    }
+
+    #[test]
+    fn test_strip_markdown_fences_with_lang() {
+        let s = "```javascript\nconst x = 1;\n```";
+        assert_eq!(strip_markdown_fences(s), "const x = 1;");
+    }
+
+    #[test]
+    fn test_strip_markdown_fences_no_fences() {
+        let s = "const x = 1;";
+        assert_eq!(strip_markdown_fences(s), "const x = 1;");
+    }
+
     #[tokio::test]
     async fn test_generate_fix_fails_without_api_key() {
-        // Clear all possible key sources
         std::env::remove_var("SICARIO_LLM_API_KEY");
         std::env::remove_var("OPENAI_API_KEY");
         std::env::remove_var("CEREBRAS_API_KEY");
 
-        // Build client with no key
         let client = LlmClient {
             api_key: None,
             endpoint: "https://example.com".to_string(),
@@ -343,7 +492,7 @@ mod tests {
         };
 
         let ctx = make_context();
-        let result = client.generate_fix(&ctx).await;
+        let result = client.generate_fix_xml(&ctx, None).await;
         assert!(result.is_err());
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("No LLM API key configured"));
@@ -351,7 +500,6 @@ mod tests {
 
     #[test]
     fn test_default_endpoint_is_openai() {
-        // When no env vars are set, should default to OpenAI
         std::env::remove_var("SICARIO_LLM_ENDPOINT");
         std::env::remove_var("OPENAI_BASE_URL");
         std::env::remove_var("CEREBRAS_ENDPOINT");

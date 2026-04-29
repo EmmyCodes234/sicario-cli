@@ -1281,6 +1281,14 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
         eprintln!("sicario fix: file not found: {}", args.file);
         return Ok(ExitCode::InternalError);
     }
+    // Resolve to an absolute path without going through canonicalize(), which
+    // on Windows produces UNC-prefixed paths (\\?\C:\...) that don't compare
+    // equal to the plain absolute paths returned by std::fs::read_dir.
+    let file_path = if file_path.is_absolute() {
+        file_path
+    } else {
+        cwd.join(&file_path)
+    };
 
     // Scan the file to find vulnerabilities
     let mut eng = engine::sast_engine::SastEngine::new(&cwd)?;
@@ -1289,10 +1297,21 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
     }
     let vulns = eng.scan_directory(file_path.parent().unwrap_or(&cwd))?;
 
+    // Normalise both sides to lowercase strings for a case-insensitive,
+    // separator-insensitive comparison (handles Windows drive-letter casing
+    // and mixed slash styles).
+    let target = file_path.to_string_lossy().replace('\\', "/").to_lowercase();
+
     // Filter to the target file and optionally the specified rule
     let file_vulns: Vec<_> = vulns
         .iter()
-        .filter(|v| v.file_path == file_path)
+        .filter(|v| {
+            v.file_path
+                .to_string_lossy()
+                .replace('\\', "/")
+                .to_lowercase()
+                == target
+        })
         .filter(|v| args.rule.as_ref().is_none_or(|r| v.rule_id == *r))
         .collect();
 

@@ -12,12 +12,14 @@ pub mod patch;
 pub mod progress;
 pub mod remediation_engine;
 pub mod remediation_property_tests;
+pub mod template_engine;
 pub mod templates;
 
 pub use backup_manager::BackupManager;
 pub use llm_client::LlmClient;
 pub use patch::Patch;
 pub use remediation_engine::RemediationEngine;
+pub use template_engine::TemplateRegistry;
 
 /// Context for generating a security fix.
 ///

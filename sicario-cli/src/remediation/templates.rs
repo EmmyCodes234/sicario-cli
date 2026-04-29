@@ -3,11 +3,18 @@
 //! Provides rule-based code transformations for 9 vulnerability types as a
 //! fallback when the LLM is unavailable or returns invalid code.
 //!
+//! The `TemplateRegistry` in `template_engine.rs` is the preferred path for
+//! high-confidence deterministic fixes. This module handles the broader
+//! classification-based fallback for everything else.
+//!
 //! Requirements: 3.1, 3.2, 3.3, 3.4, 3.5, 3.6, 3.7
 
 use std::path::Path;
 
 use crate::engine::Vulnerability;
+use crate::parser::Language as ParserLanguage;
+
+use super::template_engine::TemplateRegistry;
 
 // ── Vulnerability classification ──────────────────────────────────────────────
 
@@ -27,35 +34,28 @@ pub enum VulnType {
 
 /// Classify a vulnerability by its `cwe_id` and `rule_id`.
 pub fn classify_vulnerability(vuln: &Vulnerability) -> VulnType {
-    // Check CWE first (most reliable)
+    // Check CWE first (most reliable).
+    // Use exact numeric matching to avoid substring collisions
+    // (e.g. "798" contains "89" and "79", which would misclassify
+    // HardcodedCreds as SqlInjection or Xss).
     if let Some(cwe) = &vuln.cwe_id {
-        let cwe_lower = cwe.to_lowercase();
-        if cwe_lower.contains("89") {
-            return VulnType::SqlInjection;
-        }
-        if cwe_lower.contains("79") {
-            return VulnType::Xss;
-        }
-        if cwe_lower.contains("78") {
-            return VulnType::CommandInjection;
-        }
-        if cwe_lower.contains("22") {
-            return VulnType::PathTraversal;
-        }
-        if cwe_lower.contains("918") {
-            return VulnType::Ssrf;
-        }
-        if cwe_lower.contains("502") {
-            return VulnType::InsecureDeserial;
-        }
-        if cwe_lower.contains("798") {
-            return VulnType::HardcodedCreds;
-        }
-        if cwe_lower.contains("601") {
-            return VulnType::OpenRedirect;
-        }
-        if cwe_lower.contains("611") {
-            return VulnType::Xxe;
+        // Extract the numeric part: "CWE-89" → "89", "cwe-798" → "798"
+        let cwe_num = cwe
+            .to_lowercase()
+            .trim_start_matches("cwe-")
+            .trim()
+            .to_string();
+        match cwe_num.as_str() {
+            "89" => return VulnType::SqlInjection,
+            "79" => return VulnType::Xss,
+            "78" => return VulnType::CommandInjection,
+            "22" => return VulnType::PathTraversal,
+            "918" => return VulnType::Ssrf,
+            "502" => return VulnType::InsecureDeserial,
+            "798" => return VulnType::HardcodedCreds,
+            "601" => return VulnType::OpenRedirect,
+            "611" => return VulnType::Xxe,
+            _ => {}
         }
     }
 
@@ -98,16 +98,61 @@ pub fn classify_vulnerability(vuln: &Vulnerability) -> VulnType {
     VulnType::Unknown
 }
 
-// ── Public entry point ────────────────────────────────────────────────────────
+// ── Public entry points ───────────────────────────────────────────────────────
 
 /// Apply a template-based fix for the given vulnerability.
 ///
-/// Dispatches to the appropriate template handler based on vulnerability
-/// classification. Per Requirement 3.7, the output MUST differ from the
-/// original for every supported vulnerability type.
+/// Checks the `TemplateRegistry` first (deterministic, LLM-free). Falls back
+/// to the classification-based templates for everything else.
+///
+/// Per Requirement 3.7, the output MUST differ from the original for every
+/// supported vulnerability type.
 pub fn apply_template_fix(original: &str, vuln: &Vulnerability) -> String {
-    let vuln_type = classify_vulnerability(vuln);
+    apply_template_fix_with_registry(original, vuln, &TemplateRegistry::default())
+}
 
+/// Registry-aware variant — used by the engine which holds a pre-built registry.
+///
+/// Tries the registry first (O(1) lookup). If the registry has a template for
+/// this rule/CWE and it produces output, that result is used directly.
+/// Otherwise falls through to the classification-based templates.
+pub fn apply_template_fix_with_registry(
+    original: &str,
+    vuln: &Vulnerability,
+    registry: &TemplateRegistry,
+) -> String {
+    let lines: Vec<&str> = original.lines().collect();
+    let line_idx = vuln.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+
+    if !lines.is_empty() {
+        let vulnerable_line = lines[line_idx];
+        let lang = parser_language_for_path(&vuln.file_path);
+
+        if let Some(fixed_line) = registry.apply(
+            &vuln.rule_id,
+            vuln.cwe_id.as_deref(),
+            vulnerable_line,
+            lang,
+        ) {
+            // Re-apply original indentation if the template stripped it
+            let original_indent: String = vulnerable_line
+                .chars()
+                .take_while(|c| c.is_whitespace())
+                .collect();
+            let fixed_indented = if !original_indent.is_empty()
+                && !fixed_line.starts_with(|c: char| c.is_whitespace())
+            {
+                format!("{original_indent}{fixed_line}")
+            } else {
+                fixed_line
+            };
+
+            return replace_line(original, line_idx, &fixed_indented);
+        }
+    }
+
+    // Registry miss — fall back to classification-based templates
+    let vuln_type = classify_vulnerability(vuln);
     match vuln_type {
         VulnType::SqlInjection => apply_sql_injection_template(original, vuln),
         VulnType::Xss => apply_xss_template(original, vuln),
@@ -120,6 +165,11 @@ pub fn apply_template_fix(original: &str, vuln: &Vulnerability) -> String {
         VulnType::Xxe => apply_xxe_template(original, vuln),
         VulnType::Unknown => apply_unknown_template(original, vuln),
     }
+}
+
+/// Map a file path to a `parser::Language` for use with the registry.
+fn parser_language_for_path(path: &Path) -> ParserLanguage {
+    ParserLanguage::from_path(path).unwrap_or(ParserLanguage::JavaScript)
 }
 
 // ── Existing template fix implementations ─────────────────────────────────────
@@ -619,34 +669,45 @@ fn apply_hardcoded_creds_template(original: &str, vuln: &Vulnerability) -> Strin
 
     let replacement = match lang.as_str() {
         "python" => {
+            let var_name = extract_var_name(vuln_line).unwrap_or("secret");
+            let env_key = var_name.to_uppercase();
             format!(
                 "{indent}# SICARIO FIX: Read secret from environment variable instead of hardcoding\n\
                  {indent}import os\n\
-                 {indent}secret = os.environ.get(\"SECRET_NAME\")",
+                 {indent}{var_name} = os.environ.get(\"{env_key}\")",
             )
         }
         "javascript" | "typescript" => {
+            // Try to extract the original variable name from the line
+            let var_name = extract_var_name(vuln_line).unwrap_or("secret");
+            let env_key = var_name.to_uppercase();
             format!(
                 "{indent}// SICARIO FIX: Read secret from environment variable instead of hardcoding\n\
-                 {indent}const secret = process.env.SECRET_NAME;",
+                 {indent}const {var_name} = process.env.{env_key};",
             )
         }
         "rust" => {
+            let var_name = extract_var_name(vuln_line).unwrap_or("secret");
+            let env_key = var_name.to_uppercase();
             format!(
                 "{indent}// SICARIO FIX: Read secret from environment variable instead of hardcoding\n\
-                 {indent}let secret = std::env::var(\"SECRET_NAME\").expect(\"SECRET_NAME must be set\");",
+                 {indent}let {var_name} = std::env::var(\"{env_key}\").expect(\"{env_key} must be set\");",
             )
         }
         "go" => {
+            let var_name = extract_var_name(vuln_line).unwrap_or("secret");
+            let env_key = var_name.to_uppercase();
             format!(
                 "{indent}// SICARIO FIX: Read secret from environment variable instead of hardcoding\n\
-                 {indent}secret := os.Getenv(\"SECRET_NAME\")",
+                 {indent}{var_name} := os.Getenv(\"{env_key}\")",
             )
         }
         "java" => {
+            let var_name = extract_var_name(vuln_line).unwrap_or("secret");
+            let env_key = var_name.to_uppercase();
             format!(
                 "{indent}// SICARIO FIX: Read secret from environment variable instead of hardcoding\n\
-                 {indent}String secret = System.getenv(\"SECRET_NAME\");",
+                 {indent}String {var_name} = System.getenv(\"{env_key}\");",
             )
         }
         _ => {
@@ -835,6 +896,50 @@ fn format_comment(lang: &str, message: &str) -> String {
 /// Get the leading whitespace of a line.
 fn get_indent(line: &str) -> String {
     line.chars().take_while(|c| c.is_whitespace()).collect()
+}
+
+/// Extract the variable name from a hardcoded-credential line.
+///
+/// Handles common patterns:
+/// - `const password = "..."` → `"password"`
+/// - `let api_key = "..."` → `"api_key"`
+/// - `var token = "..."` → `"token"`
+/// - `password = "..."` → `"password"`
+/// - `String password = "..."` → `"password"`
+fn extract_var_name(line: &str) -> Option<&str> {
+    let trimmed = line.trim();
+    // Strip JS/TS/Rust declaration keywords
+    let after_keyword = trimmed
+        .strip_prefix("const ")
+        .or_else(|| trimmed.strip_prefix("let "))
+        .or_else(|| trimmed.strip_prefix("var "))
+        .or_else(|| trimmed.strip_prefix("static "))
+        .or_else(|| {
+            // Java: `String varName = ...` or `private String varName = ...`
+            // Strip access modifiers and type
+            let mut s = trimmed;
+            for kw in &["private ", "public ", "protected ", "static ", "final "] {
+                s = s.strip_prefix(kw).unwrap_or(s);
+            }
+            // Strip type name (e.g. "String ", "int ")
+            if let Some(after_type) = s.find(' ') {
+                Some(&s[after_type + 1..])
+            } else {
+                None
+            }
+        })
+        .unwrap_or(trimmed);
+
+    // The variable name is everything up to the first `=`, `:`, or whitespace
+    let name = after_keyword
+        .split(|c: char| c == '=' || c == ':' || c.is_whitespace())
+        .next()?
+        .trim();
+
+    if name.is_empty() || !name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        return None;
+    }
+    Some(name)
 }
 
 /// Replace a single line in the source with a (possibly multi-line) replacement.

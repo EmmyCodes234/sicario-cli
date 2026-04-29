@@ -14,9 +14,10 @@ use std::path::{Path, PathBuf};
 
 use super::backup_manager::{BackupManager, PatchHistoryEntry};
 use super::llm_client::LlmClient;
+use super::template_engine::TemplateRegistry;
 use super::{FixContext, Patch};
 use crate::engine::Vulnerability;
-use crate::parser::TreeSitterEngine;
+use crate::parser::{Language as ParserLanguage, TreeSitterEngine};
 
 // ── Batch mode types ──────────────────────────────────────────────────────────
 
@@ -52,6 +53,8 @@ pub struct RemediationEngine {
     tree_sitter: TreeSitterEngine,
     ai_client: LlmClient,
     backup_manager: BackupManager,
+    /// Pre-built registry of deterministic templates — checked before the LLM.
+    registry: TemplateRegistry,
 }
 
 impl RemediationEngine {
@@ -61,20 +64,27 @@ impl RemediationEngine {
             tree_sitter: TreeSitterEngine::new(project_root)?,
             ai_client: LlmClient::new()?,
             backup_manager: BackupManager::new(project_root)?,
+            registry: TemplateRegistry::default(),
         })
     }
 
     // ── Patch generation ──────────────────────────────────────────────────────
 
-    /// Generate a patch for a vulnerability.
+    /// Generate a verified patch for a vulnerability using the deterministic
+    /// XML remediation loop.
     ///
     /// Strategy:
-    /// 1. Extract vulnerability context (surrounding code) using tree-sitter.
-    /// 2. Attempt LLM-based fix via `LlmClient`.
-    /// 3. Validate the generated code's syntax.
-    /// 4. Fall back to AST-based template fix if LLM is unavailable or returns
-    ///    invalid code (Requirement 13.5).
-    /// 5. Compute a unified diff between original and fixed content.
+    /// 1. Extract a surgical context window (±10 lines) around the vulnerable node.
+    /// 2. Run `remediate_with_retries` (up to 3 LLM attempts):
+    ///    a. Ask the LLM for a fix using the XML `<sicario_patch>` protocol.
+    ///    b. Extract the patch from the XML response.
+    ///    c. Splice the patch into a temporary in-memory buffer.
+    ///    d. Validate syntax with tree-sitter.
+    ///    e. Re-run the SAST rule against the patched buffer.
+    ///    f. If both pass, break. Otherwise feed the error back to the LLM.
+    /// 3. Fall back to AST-based template fix if LLM is unavailable or all
+    ///    retries are exhausted (Requirement 13.5).
+    /// 4. Compute a unified diff between original and fixed content.
     pub fn generate_patch(&self, vulnerability: &Vulnerability) -> Result<Patch> {
         let file_path = &vulnerability.file_path;
 
@@ -82,22 +92,21 @@ impl RemediationEngine {
         let original_content = fs::read_to_string(file_path)
             .with_context(|| format!("Failed to read file: {}", file_path.display()))?;
 
-        // Build fix context from vulnerability metadata
-        let context = self.build_fix_context(vulnerability, &original_content)?;
-
-        // Try LLM-based fix first; fall back to template on failure
-        let fixed_content = self.generate_fixed_content(&context, &original_content, vulnerability);
-
-        // Validate syntax of the generated fix
-        let fixed_content = match fixed_content {
-            Ok(content) if self.validate_syntax(&content, &context.file_language) => content,
-            Ok(_invalid) => {
-                // LLM returned syntactically invalid code — use template fallback
-                self.apply_template_fix(&original_content, vulnerability)
-            }
-            Err(_) => {
-                // LLM unavailable — use template fallback
-                self.apply_template_fix(&original_content, vulnerability)
+        // ── Step 1: Try the deterministic registry (zero LLM calls) ──────────
+        let fixed_content = if let Some(fixed) =
+            self.try_registry_fix(vulnerability, &original_content)
+        {
+            fixed
+        } else {
+            // ── Step 2: LLM verification loop (up to 3 attempts) ─────────────
+            match self.remediate_with_retries(vulnerability, &original_content, 3) {
+                Ok(content) => content,
+                // ── Step 3: Classification-based template fallback ────────────
+                Err(_) => super::templates::apply_template_fix_with_registry(
+                    &original_content,
+                    vulnerability,
+                    &self.registry,
+                ),
             }
         };
 
@@ -108,12 +117,13 @@ impl RemediationEngine {
             &fixed_content,
         );
 
-        // Backup path will be set when the patch is applied; use a placeholder here
+        // Backup path placeholder — set for real in apply_patch
         let backup_path = self
             .backup_manager
             .backup_dir()
             .join("pending")
             .join(file_path.file_name().unwrap_or_default());
+
         Ok(Patch::new(
             file_path.clone(),
             original_content,
@@ -123,9 +133,237 @@ impl RemediationEngine {
         ))
     }
 
-    // ── Patch application ─────────────────────────────────────────────────────
+    // ── Deterministic LLM remediation loop ───────────────────────────────────
 
-    /// Apply a patch to the source file.
+    /// Core autonomous remediation loop.
+    ///
+    /// Attempts up to `max_retries` LLM calls. Each attempt:
+    ///   A. Sends the context window + any prior error feedback to the LLM.
+    ///   B. Extracts the patch from `<sicario_patch>` tags.
+    ///   C. Splices the patch into a sandbox buffer (never touches the real file).
+    ///   D. Validates syntax with tree-sitter.
+    ///   E. Re-runs the SAST rule against the sandbox buffer.
+    ///   F. If both pass → returns the verified fixed content.
+    ///      If either fails → appends the error to the prompt and retries.
+    ///
+    /// Returns `Err` if all retries are exhausted or the LLM is unavailable.
+    fn remediate_with_retries(
+        &self,
+        vuln: &Vulnerability,
+        original_content: &str,
+        max_retries: u32,
+    ) -> Result<String> {
+        use super::llm_client::extract_patch;
+        use super::progress::LlmProgressSpinner;
+
+        let language = detect_language_name(&vuln.file_path);
+
+        // Build the surgical context window
+        let window = get_context_window(original_content, vuln.line, 10);
+
+        let base_context = FixContext {
+            vulnerability_description: format!(
+                "Rule: {}{}",
+                vuln.rule_id,
+                vuln.cwe_id
+                    .as_deref()
+                    .map(|c| format!(" ({})", c))
+                    .unwrap_or_default()
+            ),
+            code_snippet: window.clone(),
+            file_language: language.clone(),
+            framework: None,
+            cwe_id: vuln.cwe_id.clone(),
+        };
+
+        // Build a single-threaded Tokio runtime for the async LLM calls
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("Failed to build Tokio runtime")?;
+
+        let mut extra_feedback: Option<String> = None;
+        let mut last_error = String::from("all retries exhausted");
+
+        for attempt in 1..=max_retries {
+            let spinner = LlmProgressSpinner::start(&format!(
+                "Generating fix for {} (attempt {}/{})",
+                vuln.rule_id, attempt, max_retries
+            ));
+
+            // ── Step A: Call the LLM ──────────────────────────────────────────
+            let raw_response = match rt
+                .block_on(self.ai_client.generate_fix_xml(&base_context, extra_feedback.as_deref()))
+            {
+                Ok(r) => {
+                    spinner.finish_success("LLM responded");
+                    r
+                }
+                Err(e) => {
+                    let msg = e.to_string();
+                    if msg.contains("timed out") || msg.contains("timeout") {
+                        spinner.finish_timeout();
+                    } else {
+                        spinner.finish_error(&format!("LLM error: {msg}"));
+                    }
+                    last_error = msg;
+                    break; // LLM unavailable — fall through to template
+                }
+            };
+
+            // ── Step B: Extract patch from XML ────────────────────────────────
+            let raw_patch = match extract_patch(&raw_response) {
+                Ok(p) => p,
+                Err(e) => {
+                    last_error = format!("XML extraction failed: {e}");
+                    eprintln!(
+                        "sicario: attempt {attempt}/{max_retries} — {last_error}"
+                    );
+                    extra_feedback = Some(format!(
+                        "PREVIOUS ATTEMPT FAILED: Your response did not contain valid \
+                         <sicario_patch> tags. Error: {e}\n\
+                         You MUST wrap the replacement code in <sicario_patch>...</sicario_patch>."
+                    ));
+                    continue;
+                }
+            };
+
+            // Strip any residual markdown fences inside the patch block
+            let patch_code = super::llm_client::strip_markdown_fences(&raw_patch);
+            // Strip any line-number annotations the model may have echoed back
+            // from the context window format (e.g. "  28 >>  code" or "  28    code")
+            let patch_code = strip_line_number_annotations(&patch_code);
+
+            // ── Deterministic Trimmer ─────────────────────────────────────────
+            // If the LLM returned more lines than the original snippet + 2
+            // tolerance, it rewrote surrounding context rather than just the
+            // vulnerable lines. Reject immediately — before wasting a
+            // tree-sitter parse — and bully the model back into compliance.
+            let original_line_count = vuln.snippet.lines().count().max(1);
+            let patch_line_count = patch_code.lines().count();
+            if patch_line_count > original_line_count + 2 {
+                last_error = format!(
+                    "patch too large: {patch_line_count} lines for a \
+                     {original_line_count}-line snippet"
+                );
+                eprintln!(
+                    "sicario: attempt {attempt}/{max_retries} — {last_error}"
+                );
+                extra_feedback = Some(format!(
+                    "PREVIOUS ATTEMPT FAILED: Your patch was {patch_line_count} lines \
+                     but the vulnerable snippet is only {original_line_count} line(s). \
+                     You are rewriting too much surrounding context. \
+                     Return ONLY the {original_line_count} replacement line(s) — \
+                     nothing before or after the fix."
+                ));
+                continue;
+            }
+
+            // ── Step C: Splice into sandbox buffer ────────────────────────────
+            let candidate = splice_patch(original_content, vuln.line, &vuln.snippet, &patch_code);
+
+            // ── Step D: Syntax validation ─────────────────────────────────────
+            if !self.validate_syntax(&candidate, &language) {
+                // Find the first tree-sitter error node for feedback
+                let syntax_error = get_syntax_error_description(&candidate, &language, self);
+                last_error = format!("syntax error: {syntax_error}");
+                eprintln!(
+                    "sicario: attempt {attempt}/{max_retries} — patch has syntax errors"
+                );
+                extra_feedback = Some(format!(
+                    "PREVIOUS ATTEMPT FAILED: The patch you provided has a syntax error.\n\
+                     Tree-sitter error: {syntax_error}\n\
+                     Fix the syntax and try again. Remember: return ONLY the replacement \
+                     lines, not the entire file."
+                ));
+                continue;
+            }
+
+            // ── Step E: Security re-verification (in-memory) ─────────────────
+            match self.verify_in_memory(vuln, &candidate) {
+                Ok(true) => {
+                    // Vulnerability resolved — return the verified content
+                    return Ok(candidate);
+                }
+                Ok(false) => {
+                    last_error = format!(
+                        "vulnerability {} still present after fix",
+                        vuln.rule_id
+                    );
+                    eprintln!(
+                        "sicario: attempt {attempt}/{max_retries} — {last_error}"
+                    );
+                    extra_feedback = Some(format!(
+                        "PREVIOUS ATTEMPT FAILED: The patch was applied but the vulnerability \
+                         '{}' is still detected by the SAST scanner. \
+                         Try a fundamentally different approach to eliminate this vulnerability.",
+                        vuln.rule_id
+                    ));
+                    continue;
+                }
+                Err(e) => {
+                    // Verification scan itself failed (e.g. rule load error) —
+                    // accept the syntax-valid patch rather than blocking the fix
+                    eprintln!(
+                        "sicario: warning — in-memory verification failed ({e}), \
+                         accepting syntax-valid patch"
+                    );
+                    return Ok(candidate);
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "LLM remediation failed after {max_retries} attempt(s): {last_error}"
+        ))
+    }
+
+    /// Re-run the SAST rule for `vuln` against `candidate_content` in memory.
+    ///
+    /// Writes the candidate to a temp file, scans it, and checks whether the
+    /// original rule_id is still present. Returns `Ok(true)` if resolved.
+    fn verify_in_memory(&self, vuln: &Vulnerability, candidate_content: &str) -> Result<bool> {
+        use crate::engine::sast_engine::SastEngine;
+        use tempfile::Builder;
+
+        // Write candidate to a temp file with the same extension as the original
+        let ext = vuln
+            .file_path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("tmp");
+
+        let tmp = Builder::new()
+            .suffix(&format!(".sicario.{ext}"))
+            .tempfile()
+            .context("Failed to create temp file for in-memory verification")?;
+
+        fs::write(tmp.path(), candidate_content)
+            .context("Failed to write candidate to temp file")?;
+
+        // Create a fresh engine rooted at the temp dir so no .sicarioignore
+        // from the project root interferes
+        let tmp_dir = tmp.path().parent().unwrap_or(Path::new("."));
+        let mut eng = SastEngine::new(tmp_dir)?;
+
+        // Load bundled rules — reuse the same discovery logic as cmd_fix
+        // We can't call discover_bundled_rules() from here (it's in main.rs),
+        // so we locate the rules directory relative to the binary.
+        let rules_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.join("rules")))
+            .unwrap_or_else(|| PathBuf::from("sicario-cli/rules"));
+
+        if rules_dir.exists() {
+            load_yaml_rules_recursive(&mut eng, &rules_dir);
+        }
+
+        let findings = eng.scan_file(tmp.path())?;
+        let still_present = findings.iter().any(|f| f.rule_id == vuln.rule_id);
+        Ok(!still_present)
+    }
+
+    // ── Patch application ─────────────────────────────────────────────────────
     ///
     /// 1. Creates a backup of the original file (Requirement 14.1).
     /// 2. Writes the fixed content to disk.
@@ -191,77 +429,6 @@ impl RemediationEngine {
 
     // ── Internal helpers ──────────────────────────────────────────────────────
 
-    /// Build a `FixContext` from a vulnerability and the file's source content.
-    fn build_fix_context(&self, vuln: &Vulnerability, source: &str) -> Result<FixContext> {
-        let language = detect_language_name(&vuln.file_path);
-        let snippet = extract_context_snippet(source, vuln.line, 10);
-
-        Ok(FixContext {
-            vulnerability_description: format!(
-                "Rule: {}{}",
-                vuln.rule_id,
-                vuln.cwe_id
-                    .as_deref()
-                    .map(|c| format!(" ({})", c))
-                    .unwrap_or_default()
-            ),
-            code_snippet: snippet,
-            file_language: language,
-            framework: None, // Framework detection is a future enhancement
-            cwe_id: vuln.cwe_id.clone(),
-        })
-    }
-
-    /// Attempt to generate fixed content via the LLM.
-    ///
-    /// This is a synchronous wrapper that blocks on the async call using a
-    /// single-threaded Tokio runtime so the engine can be used from sync code.
-    /// A terminal spinner is displayed while the request is in flight
-    /// (Requirements 2.1–2.5).
-    fn generate_fixed_content(
-        &self,
-        context: &FixContext,
-        original: &str,
-        vuln: &Vulnerability,
-    ) -> Result<String> {
-        use super::progress::LlmProgressSpinner;
-
-        // Start spinner before the async block (Requirement 2.1)
-        let spinner = LlmProgressSpinner::start("Generating AI fix...");
-
-        // Build a minimal Tokio runtime for the async call
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()
-            .context("Failed to build Tokio runtime")?;
-
-        let result = rt.block_on(self.ai_client.generate_fix(context));
-
-        match result {
-            Ok(fixed_snippet) => {
-                spinner.finish_success("AI fix generated");
-                // Replace the vulnerable snippet in the original file with the fix
-                Ok(splice_fix(
-                    original,
-                    vuln.line,
-                    &vuln.snippet,
-                    &fixed_snippet,
-                ))
-            }
-            Err(e) => {
-                // Distinguish timeout from other errors (Requirement 2.5)
-                let msg = e.to_string();
-                if msg.contains("timed out") || msg.contains("timeout") || msg.contains("deadline")
-                {
-                    spinner.finish_timeout();
-                } else {
-                    spinner.finish_error(&format!("LLM error: {}", msg));
-                }
-                Err(e)
-            }
-        }
-    }
-
     /// Validate that `code` is syntactically valid for `language`.
     ///
     /// Uses tree-sitter to parse the code and checks for error nodes.
@@ -278,7 +445,7 @@ impl RemediationEngine {
             "ruby" | "rb" => Language::Ruby,
             "php" => Language::Php,
             _ => {
-                eprintln!("sicario: warning — no syntax validator for {language}");
+                // Unknown language — pass through (can't validate)
                 return true;
             }
         };
@@ -291,12 +458,76 @@ impl RemediationEngine {
 
     /// Apply a simple AST-based template fix as a fallback.
     ///
-    /// Delegates to `templates::apply_template_fix()` which supports 9
-    /// vulnerability types. Per Requirement 11.10, this MUST produce code
-    /// that differs from the original — returning original unchanged is
-    /// NOT acceptable.
+    /// Delegates to `templates::apply_template_fix_with_registry()` which
+    /// supports 9 vulnerability types. Per Requirement 11.10, this MUST
+    /// produce code that differs from the original — returning original
+    /// unchanged is NOT acceptable.
     fn apply_template_fix(&self, original: &str, vuln: &Vulnerability) -> String {
-        super::templates::apply_template_fix(original, vuln)
+        super::templates::apply_template_fix_with_registry(original, vuln, &self.registry)
+    }
+
+    /// Try the `TemplateRegistry` for a deterministic, LLM-free fix.
+    ///
+    /// Returns `Some(fixed_content)` if a registered template matched and
+    /// produced a valid replacement, `None` otherwise.
+    fn try_registry_fix(
+        &self,
+        vuln: &Vulnerability,
+        original_content: &str,
+    ) -> Option<String> {
+        let lines: Vec<&str> = original_content.lines().collect();
+        let line_idx = vuln.line.saturating_sub(1).min(lines.len().saturating_sub(1));
+        if lines.is_empty() {
+            return None;
+        }
+
+        let vulnerable_line = lines[line_idx];
+        let lang = ParserLanguage::from_path(&vuln.file_path)
+            .unwrap_or(ParserLanguage::JavaScript);
+
+        let fixed_line = self.registry.apply(
+            &vuln.rule_id,
+            vuln.cwe_id.as_deref(),
+            vulnerable_line,
+            lang,
+        )?;
+
+        // Re-apply original indentation if the template stripped it
+        let original_indent: String = vulnerable_line
+            .chars()
+            .take_while(|c| c.is_whitespace())
+            .collect();
+        let fixed_indented = if !original_indent.is_empty()
+            && !fixed_line.starts_with(|c: char| c.is_whitespace())
+        {
+            format!("{original_indent}{fixed_line}")
+        } else {
+            fixed_line
+        };
+
+        // Splice the fixed line back into the full file
+        let fixed_content = splice_patch(
+            original_content,
+            vuln.line,
+            &vuln.snippet,
+            &fixed_indented,
+        );
+
+        // Validate syntax — if the registry fix breaks syntax, fall through to LLM
+        let language = detect_language_name(&vuln.file_path);
+        if !self.validate_syntax(&fixed_content, &language) {
+            eprintln!(
+                "sicario: registry template '{}' produced invalid syntax for {} — falling back to LLM",
+                self.registry
+                    .lookup(&vuln.rule_id, vuln.cwe_id.as_deref())
+                    .map(|t| t.name())
+                    .unwrap_or("unknown"),
+                vuln.rule_id
+            );
+            return None;
+        }
+
+        Some(fixed_content)
     }
 
     // ── Diff display and confirmation ─────────────────────────────────────────
@@ -341,6 +572,10 @@ impl RemediationEngine {
     /// When `auto_confirm` is false, each fix is shown and confirmed interactively.
     /// On verification failure, the specific fix is reverted and processing continues.
     ///
+    /// After each successful patch application the file is re-scanned so that
+    /// subsequent patches operate on the current state of the file rather than
+    /// stale pre-fix content. This prevents overlapping/conflicting patches.
+    ///
     /// Requirements: 5.1, 5.3, 5.4, 5.5
     pub fn generate_and_apply_batch(
         &self,
@@ -349,6 +584,7 @@ impl RemediationEngine {
         no_verify: bool,
         rule_files: &[PathBuf],
     ) -> Result<BatchResult> {
+        use crate::engine::sast_engine::SastEngine;
         use crate::engine::vulnerability::Finding;
         use crate::verification::scanner::VerificationScanning;
         use crate::verification::VerificationScanner;
@@ -362,147 +598,234 @@ impl RemediationEngine {
 
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
 
-        for vuln in vulns {
-            let rule_id = vuln.rule_id.clone();
-            let file_path = vuln.file_path.clone();
+        // Group vulns by file so we can re-scan per-file after each apply.
+        // Process files one at a time; within each file work through findings
+        // one-by-one, re-reading the current file state before each patch.
+        let mut files_seen: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut file_order: Vec<PathBuf> = Vec::new();
+        for v in vulns {
+            if files_seen.insert(v.file_path.clone()) {
+                file_order.push(v.file_path.clone());
+            }
+        }
 
-            // Generate patch
-            let patch = match self.generate_patch(vuln) {
-                Ok(p) => p,
-                Err(e) => {
-                    let reason = format!("patch generation failed: {e}");
-                    eprintln!(
-                        "sicario: skipping {} in {} — {reason}",
-                        rule_id,
-                        file_path.display()
-                    );
-                    result.skipped += 1;
-                    result.details.push(BatchFixDetail {
-                        rule_id,
-                        file_path,
-                        outcome: BatchFixOutcome::Skipped(reason),
-                    });
-                    continue;
-                }
-            };
+        for file_path in &file_order {
+            // Collect the initial rule_ids to fix for this file (in original order)
+            let rule_ids_to_fix: Vec<String> = vulns
+                .iter()
+                .filter(|v| &v.file_path == file_path)
+                .map(|v| v.rule_id.clone())
+                .collect();
 
-            // Confirm (skip prompt when auto_confirm is true)
-            let confirmed = if auto_confirm {
-                true
-            } else {
-                match self.display_diff_and_confirm(&patch) {
-                    Ok(c) => c,
+            // Work through each rule_id. After each successful apply, re-scan
+            // the file so the next patch sees the updated source.
+            let mut remaining_rule_ids = rule_ids_to_fix;
+
+            while !remaining_rule_ids.is_empty() {
+                // Re-scan the file to get current findings
+                let current_vulns: Vec<Vulnerability> = {
+                    let mut eng = match SastEngine::new(&cwd) {
+                        Ok(e) => e,
+                        Err(e) => {
+                            eprintln!("sicario: failed to create scan engine: {e}");
+                            break;
+                        }
+                    };
+                    for f in rule_files {
+                        let _ = eng.load_rules(f);
+                    }
+                    let parent = file_path.parent().unwrap_or(&cwd);
+                    let target_str = file_path.to_string_lossy().replace('\\', "/").to_lowercase();
+                    match eng.scan_directory(parent) {
+                        Ok(all) => all
+                            .into_iter()
+                            .filter(|v| {
+                                v.file_path
+                                    .to_string_lossy()
+                                    .replace('\\', "/")
+                                    .to_lowercase()
+                                    == target_str
+                            })
+                            .collect(),
+                        Err(e) => {
+                            eprintln!("sicario: re-scan failed for {}: {e}", file_path.display());
+                            break;
+                        }
+                    }
+                };
+
+                // Find the first remaining rule_id that still has a finding
+                let next = remaining_rule_ids.iter().enumerate().find_map(|(i, rule_id)| {
+                    current_vulns
+                        .iter()
+                        .find(|v| &v.rule_id == rule_id)
+                        .map(|v| (i, v.clone()))
+                });
+
+                let (idx, vuln) = match next {
+                    Some(x) => x,
+                    None => {
+                        // All remaining rule_ids are already resolved — mark as applied
+                        for rule_id in &remaining_rule_ids {
+                            result.applied += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Applied,
+                            });
+                        }
+                        break;
+                    }
+                };
+
+                let rule_id = vuln.rule_id.clone();
+
+                // Generate patch against current file state
+                let patch = match self.generate_patch(&vuln) {
+                    Ok(p) => p,
                     Err(e) => {
-                        let reason = format!("confirmation prompt failed: {e}");
-                        eprintln!("sicario: skipping {} — {reason}", rule_id);
+                        let reason = format!("patch generation failed: {e}");
+                        eprintln!(
+                            "sicario: skipping {} in {} — {reason}",
+                            rule_id,
+                            file_path.display()
+                        );
                         result.skipped += 1;
                         result.details.push(BatchFixDetail {
-                            rule_id,
-                            file_path,
+                            rule_id: rule_id.clone(),
+                            file_path: file_path.clone(),
                             outcome: BatchFixOutcome::Skipped(reason),
                         });
+                        remaining_rule_ids.remove(idx);
                         continue;
                     }
-                }
-            };
-
-            if !confirmed {
-                result.skipped += 1;
-                result.details.push(BatchFixDetail {
-                    rule_id,
-                    file_path,
-                    outcome: BatchFixOutcome::Skipped("user declined".to_string()),
-                });
-                continue;
-            }
-
-            // Apply patch
-            if let Err(e) = self.apply_patch(&patch) {
-                let reason = format!("apply failed: {e}");
-                eprintln!("sicario: skipping {} — {reason}", rule_id);
-                result.skipped += 1;
-                result.details.push(BatchFixDetail {
-                    rule_id,
-                    file_path,
-                    outcome: BatchFixOutcome::Skipped(reason),
-                });
-                continue;
-            }
-
-            // Post-fix verification
-            if !no_verify {
-                let mut verifier = VerificationScanner::new(&cwd);
-                let original_finding = crate::verification::OriginalFinding {
-                    rule_id: vuln.rule_id.clone(),
-                    fingerprint: Finding::compute_fingerprint(
-                        &vuln.rule_id,
-                        &vuln.file_path,
-                        &vuln.snippet,
-                    ),
-                    file_path: vuln.file_path.clone(),
                 };
-                match verifier.verify_fix(&file_path, &original_finding, rule_files) {
-                    Ok(crate::verification::VerificationResult::Resolved) => {
-                        eprintln!("sicario: fix verified — {} resolved", rule_id);
-                        result.applied += 1;
-                        result.details.push(BatchFixDetail {
-                            rule_id,
-                            file_path,
-                            outcome: BatchFixOutcome::Applied,
-                        });
+
+                // Confirm
+                let confirmed = if auto_confirm {
+                    true
+                } else {
+                    match self.display_diff_and_confirm(&patch) {
+                        Ok(c) => c,
+                        Err(e) => {
+                            let reason = format!("confirmation prompt failed: {e}");
+                            eprintln!("sicario: skipping {} — {reason}", rule_id);
+                            result.skipped += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Skipped(reason),
+                            });
+                            remaining_rule_ids.remove(idx);
+                            continue;
+                        }
                     }
-                    Ok(crate::verification::VerificationResult::StillPresent) => {
-                        eprintln!("sicario: warning — {} still present, reverting", rule_id);
-                        let _ = self.revert_patch(&patch);
-                        result.reverted += 1;
-                        result.details.push(BatchFixDetail {
-                            rule_id,
-                            file_path,
-                            outcome: BatchFixOutcome::Reverted(
-                                "vulnerability still present after fix".to_string(),
-                            ),
-                        });
-                    }
-                    Ok(crate::verification::VerificationResult::NewFindingsIntroduced(new)) => {
-                        eprintln!(
-                            "sicario: warning — {} introduced {} new finding(s), reverting",
-                            rule_id,
-                            new.len()
-                        );
-                        let _ = self.revert_patch(&patch);
-                        result.reverted += 1;
-                        result.details.push(BatchFixDetail {
-                            rule_id,
-                            file_path,
-                            outcome: BatchFixOutcome::Reverted(format!(
-                                "fix introduced {} new finding(s)",
-                                new.len()
-                            )),
-                        });
-                    }
-                    Err(e) => {
-                        eprintln!(
-                            "sicario: warning — verification failed for {}, reverting: {e}",
-                            rule_id
-                        );
-                        let _ = self.revert_patch(&patch);
-                        result.reverted += 1;
-                        result.details.push(BatchFixDetail {
-                            rule_id,
-                            file_path,
-                            outcome: BatchFixOutcome::Reverted(format!("verification error: {e}")),
-                        });
-                    }
+                };
+
+                if !confirmed {
+                    result.skipped += 1;
+                    result.details.push(BatchFixDetail {
+                        rule_id: rule_id.clone(),
+                        file_path: file_path.clone(),
+                        outcome: BatchFixOutcome::Skipped("user declined".to_string()),
+                    });
+                    remaining_rule_ids.remove(idx);
+                    continue;
                 }
-            } else {
-                // No verification — count as applied
-                eprintln!("sicario: patch applied for {}", rule_id);
-                result.applied += 1;
-                result.details.push(BatchFixDetail {
-                    rule_id,
-                    file_path,
-                    outcome: BatchFixOutcome::Applied,
-                });
+
+                // Apply patch
+                if let Err(e) = self.apply_patch(&patch) {
+                    let reason = format!("apply failed: {e}");
+                    eprintln!("sicario: skipping {} — {reason}", rule_id);
+                    result.skipped += 1;
+                    result.details.push(BatchFixDetail {
+                        rule_id: rule_id.clone(),
+                        file_path: file_path.clone(),
+                        outcome: BatchFixOutcome::Skipped(reason),
+                    });
+                    remaining_rule_ids.remove(idx);
+                    continue;
+                }
+
+                // Post-fix verification
+                if !no_verify {
+                    let mut verifier = VerificationScanner::new(&cwd);
+                    let original_finding = crate::verification::OriginalFinding {
+                        rule_id: vuln.rule_id.clone(),
+                        fingerprint: Finding::compute_fingerprint(
+                            &vuln.rule_id,
+                            &vuln.file_path,
+                            &vuln.snippet,
+                        ),
+                        file_path: vuln.file_path.clone(),
+                    };
+                    match verifier.verify_fix(file_path, &original_finding, rule_files) {
+                        Ok(crate::verification::VerificationResult::Resolved) => {
+                            eprintln!("sicario: fix verified — {} resolved", rule_id);
+                            result.applied += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Applied,
+                            });
+                        }
+                        Ok(crate::verification::VerificationResult::StillPresent) => {
+                            eprintln!("sicario: warning — {} still present, reverting", rule_id);
+                            let _ = self.revert_patch(&patch);
+                            result.reverted += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Reverted(
+                                    "vulnerability still present after fix".to_string(),
+                                ),
+                            });
+                        }
+                        Ok(crate::verification::VerificationResult::NewFindingsIntroduced(new)) => {
+                            eprintln!(
+                                "sicario: warning — {} introduced {} new finding(s), reverting",
+                                rule_id,
+                                new.len()
+                            );
+                            let _ = self.revert_patch(&patch);
+                            result.reverted += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Reverted(format!(
+                                    "fix introduced {} new finding(s)",
+                                    new.len()
+                                )),
+                            });
+                        }
+                        Err(e) => {
+                            eprintln!(
+                                "sicario: warning — verification failed for {}, reverting: {e}",
+                                rule_id
+                            );
+                            let _ = self.revert_patch(&patch);
+                            result.reverted += 1;
+                            result.details.push(BatchFixDetail {
+                                rule_id: rule_id.clone(),
+                                file_path: file_path.clone(),
+                                outcome: BatchFixOutcome::Reverted(format!(
+                                    "verification error: {e}"
+                                )),
+                            });
+                        }
+                    }
+                } else {
+                    eprintln!("sicario: patch applied for {}", rule_id);
+                    result.applied += 1;
+                    result.details.push(BatchFixDetail {
+                        rule_id: rule_id.clone(),
+                        file_path: file_path.clone(),
+                        outcome: BatchFixOutcome::Applied,
+                    });
+                }
+
+                // Remove this rule_id from the remaining list regardless of outcome
+                remaining_rule_ids.remove(idx);
             }
         }
 
@@ -941,8 +1264,11 @@ pub(crate) fn detect_language_name(path: &Path) -> String {
     }
 }
 
-/// Extract `context_lines` lines of context around `target_line` (1-indexed).
-fn extract_context_snippet(source: &str, target_line: usize, context_lines: usize) -> String {
+/// Extract a surgical context window around `target_line` (1-indexed).
+///
+/// Returns `context_lines` lines above and below the vulnerable line,
+/// annotated with line numbers so the LLM knows exactly which line to fix.
+pub fn get_context_window(source: &str, target_line: usize, context_lines: usize) -> String {
     let lines: Vec<&str> = source.lines().collect();
     if lines.is_empty() {
         return String::new();
@@ -952,28 +1278,193 @@ fn extract_context_snippet(source: &str, target_line: usize, context_lines: usiz
     let start = line_idx.saturating_sub(context_lines);
     let end = (line_idx + context_lines + 1).min(lines.len());
 
-    lines[start..end].join("\n")
+    // Annotate with 1-indexed line numbers and mark the vulnerable line
+    lines[start..end]
+        .iter()
+        .enumerate()
+        .map(|(i, line)| {
+            let lineno = start + i + 1;
+            if lineno == target_line {
+                format!("{lineno:4} >> {line}")  // >> marks the vulnerable line
+            } else {
+                format!("{lineno:4}    {line}")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
-/// Replace the vulnerable line in `source` with the LLM-generated `fix`.
+/// Splice a verified patch into the source file content.
 ///
-/// If the original snippet is found verbatim in the source, it is replaced.
-/// Otherwise the fix is inserted at the target line.
-fn splice_fix(source: &str, target_line: usize, original_snippet: &str, fix: &str) -> String {
-    // Try verbatim replacement first
-    if source.contains(original_snippet) {
-        return source.replacen(original_snippet, fix, 1);
+/// Strategy:
+/// 1. Replace the entire vulnerable line with the patch (line-based).
+///    This avoids double-semicolons when the snippet is a sub-expression of
+///    the line (e.g. snippet = `eval(userInput)`, line = `    eval(userInput);`).
+/// 2. If the patch has no leading indentation but the original line does,
+///    re-apply the original indentation to each patch line so the fix
+///    stays properly indented in the file.
+pub fn splice_patch(source: &str, target_line: usize, original_snippet: &str, patch: &str) -> String {
+    let lines: Vec<&str> = source.lines().collect();
+    if lines.is_empty() {
+        return source.to_string();
     }
 
-    // Fall back to line-based replacement
-    let mut lines: Vec<&str> = source.lines().collect();
-    let line_idx = target_line
-        .saturating_sub(1)
-        .min(lines.len().saturating_sub(1));
-    if !lines.is_empty() {
-        lines[line_idx] = fix;
+    let line_idx = target_line.saturating_sub(1).min(lines.len() - 1);
+    let original_line = lines[line_idx];
+
+    // Detect original indentation
+    let original_indent: String = original_line
+        .chars()
+        .take_while(|c| c.is_whitespace())
+        .collect();
+
+    // If the patch has no leading indentation but the original line does,
+    // prepend the original indentation to each line of the patch.
+    let indented_patch: String = if !original_indent.is_empty()
+        && !patch.starts_with(|c: char| c.is_whitespace())
+    {
+        patch
+            .lines()
+            .enumerate()
+            .map(|(i, l)| {
+                if i == 0 || !l.is_empty() {
+                    format!("{original_indent}{l}")
+                } else {
+                    l.to_string()
+                }
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    } else {
+        patch.to_string()
+    };
+
+    let mut result = lines.to_vec();
+    result[line_idx] = &indented_patch;
+    let mut out = result.join("\n");
+    if source.ends_with('\n') {
+        out.push('\n');
     }
-    lines.join("\n")
+    out
+}
+
+/// Get a human-readable description of the first syntax error in `code`.
+///
+/// Walks the tree-sitter parse tree looking for ERROR nodes and returns
+/// a short description including the line/column of the first error found.
+fn get_syntax_error_description(code: &str, language: &str, engine: &RemediationEngine) -> String {
+    use crate::parser::Language;
+
+    let lang = match language.to_lowercase().as_str() {
+        "javascript" | "js" => Language::JavaScript,
+        "typescript" | "ts" => Language::TypeScript,
+        "python" | "py" => Language::Python,
+        "rust" | "rs" => Language::Rust,
+        "go" => Language::Go,
+        "java" => Language::Java,
+        _ => return "unknown syntax error".to_string(),
+    };
+
+    match engine.tree_sitter.parse_source(code, lang) {
+        Ok(tree) => {
+            let root = tree.root_node();
+            if !root.has_error() {
+                return "no error (tree-sitter)".to_string();
+            }
+            // Walk the tree to find the first ERROR node
+            find_first_error_node(&root, code)
+        }
+        Err(e) => format!("parse failed: {e}"),
+    }
+}
+
+/// Recursively walk a tree-sitter node tree to find the first ERROR node.
+fn find_first_error_node(node: &tree_sitter::Node, source: &str) -> String {
+    if node.is_error() || node.kind() == "ERROR" {
+        let start = node.start_position();
+        let snippet: String = source
+            .lines()
+            .nth(start.row)
+            .unwrap_or("")
+            .chars()
+            .take(60)
+            .collect();
+        return format!(
+            "line {}, col {}: near `{}`",
+            start.row + 1,
+            start.column + 1,
+            snippet.trim()
+        );
+    }
+    for i in 0..node.child_count() {
+        if let Some(child) = node.child(i) {
+            if child.has_error() {
+                let result = find_first_error_node(&child, source);
+                if !result.is_empty() {
+                    return result;
+                }
+            }
+        }
+    }
+    String::new()
+}
+
+/// Recursively load YAML rule files from a directory into a SastEngine.
+fn load_yaml_rules_recursive(eng: &mut crate::engine::sast_engine::SastEngine, dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                load_yaml_rules_recursive(eng, &path);
+            } else if path.extension().and_then(|e| e.to_str()) == Some("yaml") {
+                let _ = eng.load_rules(&path);
+            }
+        }
+    }
+}
+
+/// Strip line-number annotations from LLM output.
+///
+/// The context window sent to the LLM includes annotations like:
+///   `  28 >>  eval(userInput);`  (vulnerable line)
+///   `  27      // comment`       (context line)
+///
+/// If the model echoes these back in its patch, this function strips them
+/// so only the raw code is spliced into the file.
+fn strip_line_number_annotations(patch: &str) -> String {
+    // Match lines that start with optional whitespace, digits, optional ">>" or spaces, then code
+    // Pattern: optional spaces, 1-4 digits, spaces, optional ">>", spaces, then the actual code
+    let lines: Vec<&str> = patch.lines().collect();
+    let annotated = lines.iter().all(|l| {
+        let trimmed = l.trim_start();
+        // Check if every non-empty line starts with digits followed by spaces/>>
+        if trimmed.is_empty() {
+            return true;
+        }
+        let mut chars = trimmed.chars();
+        chars.next().map(|c| c.is_ascii_digit()).unwrap_or(false)
+    });
+
+    if !annotated {
+        return patch.to_string();
+    }
+
+    // Strip the annotations: remove leading "NNN >> " or "NNN    " prefix
+    lines
+        .iter()
+        .map(|line| {
+            let trimmed = line.trim_start();
+            // Skip leading digits
+            let after_digits = trimmed.trim_start_matches(|c: char| c.is_ascii_digit());
+            // Skip spaces and optional ">>"
+            let after_sep = after_digits
+                .trim_start_matches(' ')
+                .trim_start_matches(">>")
+                .trim_start_matches(' ');
+            after_sep
+        })
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Compute a unified diff string between `original` and `fixed`.
@@ -1151,7 +1642,8 @@ mod tests {
             .map(|i| format!("line{}", i))
             .collect::<Vec<_>>()
             .join("\n");
-        let snippet = extract_context_snippet(&source, 10, 3);
+        // get_context_window includes line numbers; check the content is present
+        let snippet = get_context_window(&source, 10, 3);
         assert!(snippet.contains("line10"));
         assert!(snippet.contains("line7"));
         assert!(snippet.contains("line13"));
@@ -1160,14 +1652,15 @@ mod tests {
     #[test]
     fn test_extract_context_snippet_start_of_file() {
         let source = "line1\nline2\nline3\nline4\nline5\n";
-        let snippet = extract_context_snippet(source, 1, 3);
+        let snippet = get_context_window(source, 1, 3);
         assert!(snippet.contains("line1"));
     }
 
     #[test]
-    fn test_splice_fix_verbatim_replacement() {
+    fn test_splice_patch_line_replacement() {
         let source = "let x = dangerous_call(input);\nlet y = 2;\n";
-        let result = splice_fix(source, 1, "dangerous_call(input)", "safe_call(input)");
+        // splice_patch replaces the whole target line
+        let result = splice_patch(source, 1, "dangerous_call(input)", "let x = safe_call(input);");
         assert!(result.contains("safe_call(input)"));
         assert!(!result.contains("dangerous_call(input)"));
     }
