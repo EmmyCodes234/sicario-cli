@@ -38,3 +38,7 @@ sicario-frontend/
 
 # Sicario Power (has its own repo)
 sicario-power/
+
+# Private keys — never commit
+*.pem
+*.key
