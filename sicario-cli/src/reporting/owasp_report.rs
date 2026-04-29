@@ -242,6 +242,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: None,
             owasp_category: owasp,
+            execution_trace: None,
         }
     }
 

@@ -49,7 +49,19 @@ impl SastEngine {
     pub fn load_default_rules(&mut self) {
         use crate::parser::Language;
 
-        let defaults: &[(&str, &str, &str, Severity, &[Language], &str, Option<&str>, Option<OwaspCategory>)] = &[
+        // Type alias to simplify the complex tuple type
+        type DefaultRule<'a> = (
+            &'a str,
+            &'a str,
+            &'a str,
+            Severity,
+            &'a [Language],
+            &'a str,
+            Option<&'a str>,
+            Option<OwaspCategory>,
+        );
+
+        let defaults: &[DefaultRule] = &[
             // ── JavaScript / TypeScript ──────────────────────────────────────
             (
                 "js/eval-injection",
@@ -702,7 +714,9 @@ impl SastEngine {
             use crate::scanner::suppression_parser::SuppressionParser;
             let parser = SuppressionParser::new();
             vulnerabilities.retain(|v| {
-                !parser.is_sast_suppressed(&source_code, v.line, &v.rule_id).suppressed
+                !parser
+                    .is_sast_suppressed(&source_code, v.line, &v.rule_id)
+                    .suppressed
             });
         }
 

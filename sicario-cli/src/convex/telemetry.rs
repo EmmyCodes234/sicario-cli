@@ -98,6 +98,7 @@ mod tests {
             cloud_exposed: Some(true),
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: Some(OwaspCategory::A03_Injection),
+            execution_trace: None,
         }
     }
 

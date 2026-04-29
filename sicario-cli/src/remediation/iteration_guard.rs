@@ -12,6 +12,16 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+// ── IterationLimitError ───────────────────────────────────────────────────────
+
+/// Error returned when the iteration cap has been reached.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("iteration limit reached after {attempts} attempt(s)")]
+pub struct IterationLimitError {
+    /// Number of attempts recorded before the limit was hit.
+    pub attempts: u32,
+}
+
 // ── IterationRecord ───────────────────────────────────────────────────────────
 
 /// Diagnostic record for a single failed fix attempt.
@@ -65,15 +75,18 @@ impl IterationGuard {
     /// Record a failed attempt.
     ///
     /// Returns `Ok(attempt_number)` if more attempts remain, or
-    /// `Err(())` when the cap has been reached.
-    pub fn record_failure(&mut self, reason: impl Into<String>) -> Result<u32, ()> {
+    /// `Err(IterationLimitError)` when the cap has been reached.
+    pub fn record_failure(
+        &mut self,
+        reason: impl Into<String>,
+    ) -> Result<u32, IterationLimitError> {
         let attempt = self.records.len() as u32 + 1;
         self.records.push(IterationRecord {
             attempt,
             reason: reason.into(),
         });
         if attempt >= self.max_iterations {
-            Err(())
+            Err(IterationLimitError { attempts: attempt })
         } else {
             Ok(attempt)
         }
@@ -161,14 +174,14 @@ mod tests {
         let (_dir, mut guard) = make_guard(3);
         let _ = guard.record_failure("a1");
         let _ = guard.record_failure("a2");
-        assert_eq!(guard.record_failure("a3"), Err(()));
+        assert!(guard.record_failure("a3").is_err());
         assert!(guard.is_exhausted());
     }
 
     #[test]
     fn test_cap_of_one_exhausted_on_first_failure() {
         let (_dir, mut guard) = make_guard(1);
-        assert_eq!(guard.record_failure("immediate fail"), Err(()));
+        assert!(guard.record_failure("immediate fail").is_err());
         assert!(guard.is_exhausted());
     }
 
@@ -177,9 +190,7 @@ mod tests {
         let (dir, mut guard) = make_guard(2);
         let _ = guard.record_failure("syntax error");
         let _ = guard.record_failure("invalid patch");
-        guard
-            .flush_trace_log("sql-injection", "src/db.rs")
-            .unwrap();
+        guard.flush_trace_log("sql-injection", "src/db.rs").unwrap();
 
         let log_path = dir.path().join(".sicario").join("trace.log");
         assert!(log_path.exists());

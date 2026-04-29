@@ -197,6 +197,7 @@ mod tests {
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: Some("A03".to_string()),
             fingerprint: None,
+            execution_trace: None,
         }
     }
 
@@ -220,12 +221,18 @@ mod tests {
         let payload = sample_payload();
         let json = serde_json::to_string(&payload).unwrap();
         assert!(json.contains("projectId"), "expected projectId in JSON");
-        assert!(json.contains("repositoryUrl"), "expected repositoryUrl in JSON");
+        assert!(
+            json.contains("repositoryUrl"),
+            "expected repositoryUrl in JSON"
+        );
         assert!(json.contains("commitSha"), "expected commitSha in JSON");
         assert!(json.contains("scanId"), "expected scanId in JSON");
         assert!(json.contains("durationMs"), "expected durationMs in JSON");
         assert!(json.contains("rulesLoaded"), "expected rulesLoaded in JSON");
-        assert!(json.contains("filesScanned"), "expected filesScanned in JSON");
+        assert!(
+            json.contains("filesScanned"),
+            "expected filesScanned in JSON"
+        );
     }
 
     #[test]
@@ -233,7 +240,10 @@ mod tests {
         let finding = sample_finding();
         let json = serde_json::to_string(&finding).unwrap();
         assert!(json.contains("cweId"), "expected cweId in JSON");
-        assert!(json.contains("owaspCategory"), "expected owaspCategory in JSON");
+        assert!(
+            json.contains("owaspCategory"),
+            "expected owaspCategory in JSON"
+        );
     }
 
     #[test]
@@ -247,11 +257,18 @@ mod tests {
             cwe_id: None,
             owasp_category: None,
             fingerprint: None,
+            execution_trace: None,
         };
         let json = serde_json::to_string(&finding).unwrap();
         assert!(!json.contains("cweId"), "cweId should be omitted when None");
-        assert!(!json.contains("owaspCategory"), "owaspCategory should be omitted when None");
-        assert!(!json.contains("fingerprint"), "fingerprint should be omitted when None");
+        assert!(
+            !json.contains("owaspCategory"),
+            "owaspCategory should be omitted when None"
+        );
+        assert!(
+            !json.contains("fingerprint"),
+            "fingerprint should be omitted when None"
+        );
     }
 
     #[test]

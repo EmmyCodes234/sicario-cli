@@ -77,6 +77,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: None,
             owasp_category: None,
+            execution_trace: None,
         }
     }
 

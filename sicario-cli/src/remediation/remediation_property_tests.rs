@@ -85,6 +85,7 @@ mod property_tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-798".to_string()),
             owasp_category: None,
+            execution_trace: None,
         }
     }
 

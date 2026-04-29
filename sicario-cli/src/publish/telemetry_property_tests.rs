@@ -39,10 +39,10 @@ mod tests {
     /// Strategy for a single `TelemetryFinding` with valid fields.
     fn arb_finding() -> impl Strategy<Value = TelemetryFinding> {
         (
-            "[a-z][a-z0-9\\-]{1,30}",   // rule
+            "[a-z][a-z0-9\\-]{1,30}", // rule
             arb_severity(),
             "[a-z][a-z0-9/._\\-]{1,60}", // file
-            1usize..=10000usize,          // line
+            1usize..=10000usize,         // line
             arb_snippet(),
         )
             .prop_map(|(rule, severity, file, line, snippet)| TelemetryFinding {
@@ -54,20 +54,21 @@ mod tests {
                 cwe_id: None,
                 owasp_category: None,
                 fingerprint: None,
+                execution_trace: None,
             })
     }
 
     /// Strategy for a `TelemetryPayload` with 0–100 findings.
     fn arb_payload() -> impl Strategy<Value = TelemetryPayload> {
         (
-            "[a-z][a-z0-9\\-]{4,20}",   // project_id
+            "[a-z][a-z0-9\\-]{4,20}",                       // project_id
             "https://github\\.com/[a-z]{3,10}/[a-z]{3,10}", // repository_url
-            "[a-f0-9]{12,40}",           // commit_sha
-            "scan\\-[0-9]{10}\\-[A-Z]{6}", // scan_id
+            "[a-f0-9]{12,40}",                              // commit_sha
+            "scan\\-[0-9]{10}\\-[A-Z]{6}",                  // scan_id
             prop::collection::vec(arb_finding(), 0..=100),
         )
-            .prop_map(|(project_id, repository_url, commit_sha, scan_id, findings)| {
-                TelemetryPayload {
+            .prop_map(
+                |(project_id, repository_url, commit_sha, scan_id, findings)| TelemetryPayload {
                     project_id,
                     repository_url,
                     commit_sha,
@@ -78,8 +79,8 @@ mod tests {
                     rules_loaded: None,
                     files_scanned: None,
                     findings,
-                }
-            })
+                },
+            )
     }
 
     // ── Property 1: Telemetry Payload Serialization Round-Trip ───────────────
@@ -290,7 +291,13 @@ mod tests {
     /// Validate that a JSON value contains all required telemetry fields.
     /// Returns Ok(()) if valid, Err(missing_fields) if any are absent.
     fn validate_required_fields(value: &serde_json::Value) -> Result<(), Vec<&'static str>> {
-        let required = ["projectId", "repositoryUrl", "commitSha", "scanId", "findings"];
+        let required = [
+            "projectId",
+            "repositoryUrl",
+            "commitSha",
+            "scanId",
+            "findings",
+        ];
         let missing: Vec<&'static str> = required
             .iter()
             .filter(|&&field| value.get(field).is_none())

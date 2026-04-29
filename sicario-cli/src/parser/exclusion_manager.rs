@@ -155,9 +155,9 @@ impl ExclusionManager {
             let pattern = if line.ends_with('/') {
                 // Directory pattern — match everything inside at any depth
                 format!("**/{}**", line)
-            } else if line.starts_with('/') {
+            } else if let Some(stripped) = line.strip_prefix('/') {
                 // Rooted pattern — strip leading slash, match from scan root
-                line[1..].to_string()
+                stripped.to_string()
             } else if !line.contains('/') {
                 // Bare filename — match anywhere in tree
                 format!("**/{}", line)

@@ -1027,6 +1027,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: None,
+            execution_trace: None,
         }
     }
 
@@ -1246,6 +1247,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
@@ -1277,6 +1279,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
@@ -1308,6 +1311,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-79".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
@@ -1336,6 +1340,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-78".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
@@ -1367,6 +1372,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-999".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
 
         let fixed = engine.apply_template_fix(original, &vuln);
@@ -1394,6 +1400,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: Some("CWE-89".to_string()),
             owasp_category: None,
+            execution_trace: None,
         };
         assert_eq!(classify_vulnerability(&vuln_sql), VulnType::SqlInjection);
 
@@ -1427,6 +1434,7 @@ mod tests {
             cloud_exposed: None,
             cwe_id: None,
             owasp_category: None,
+            execution_trace: None,
         };
         assert_eq!(classify_vulnerability(&vuln), VulnType::SqlInjection);
 

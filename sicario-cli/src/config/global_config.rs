@@ -92,8 +92,8 @@ pub fn set_global_config_value(key: &str, value: &str) -> Result<()> {
         }
     }
 
-    let toml_str = toml::to_string_pretty(&config)
-        .context("Failed to serialize global config to TOML")?;
+    let toml_str =
+        toml::to_string_pretty(&config).context("Failed to serialize global config to TOML")?;
 
     std::fs::write(&path, &toml_str)
         .with_context(|| format!("Failed to write {}", path.display()))?;
@@ -229,6 +229,7 @@ mod tests {
             openai_api_key: None,
             llm_endpoint: Some("https://api.anthropic.com/v1".to_string()),
             llm_model: Some("claude-3-5-sonnet-20241022".to_string()),
+            extra: Default::default(),
         };
         let toml_str = toml::to_string_pretty(&config).unwrap();
         let back: GlobalConfig = toml::from_str(&toml_str).unwrap();
@@ -246,7 +247,10 @@ mod tests {
         std::env::set_var("HOME", tmp.path());
         let result = set_global_config_value("UNKNOWN_KEY", "value");
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Unknown config key"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Unknown config key"));
 
         // Restore HOME
         match original_home {

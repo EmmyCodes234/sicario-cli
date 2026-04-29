@@ -1,0 +1,124 @@
+name: Zigbuild Release
+
+# Produces optimised, static release binaries for:
+#   • x86_64-unknown-linux-musl  – fully static Linux binary (runs anywhere)
+#   • aarch64-apple-darwin       – macOS Apple Silicon binary
+#
+# Both targets are cross-compiled from ubuntu-latest using cargo-zigbuild,
+# which routes the C/C++ compilation of vendored dependencies through Zig's
+# bundled clang toolchain so no host SDK is required.
+#
+# This workflow runs in parallel with the existing cargo-dist release.yml.
+# The binaries it produces are uploaded to the same GitHub Release that
+# cargo-dist creates (or creates one itself if it runs first).
+
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+*'
+
+permissions:
+  contents: write   # needed to create/update GitHub Releases
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # ── Static Linux binary ──────────────────────────────────────────────
+          - target: x86_64-unknown-linux-musl
+            artifact_name: sicario-x86_64-linux-musl
+            # musl libc is provided by the rustup target; no extra apt packages needed.
+            extra_apt: ""
+
+          # ── macOS Apple Silicon (cross-compiled from Linux via Zig) ──────────
+          - target: aarch64-apple-darwin
+            artifact_name: sicario-aarch64-macos
+            extra_apt: ""
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # ── Rust toolchain ───────────────────────────────────────────────────────
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # ── Zig compiler ─────────────────────────────────────────────────────────
+      - name: Install Zig
+        uses: goto-bus-stop/setup-zig@v2
+        with:
+          version: "0.13.0"   # latest stable; cargo-zigbuild 0.19+ requires ≥0.12
+
+      # ── cargo-zigbuild ───────────────────────────────────────────────────────
+      - name: Install cargo-zigbuild
+        run: cargo install cargo-zigbuild --version "0.19.3" --locked
+
+      # ── Rust build cache ─────────────────────────────────────────────────────
+      - name: Cache Cargo registry + build artefacts
+        uses: swatinem/rust-cache@v2
+        with:
+          key: zigbuild-${{ matrix.target }}
+
+      # ── Optional extra system packages ───────────────────────────────────────
+      - name: Install extra apt packages
+        if: ${{ matrix.extra_apt != '' }}
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y ${{ matrix.extra_apt }}
+
+      # ── Build ────────────────────────────────────────────────────────────────
+      # --features vendored-libs vendors libgit2 and disables the D-Bus keyring
+      # backend so the binary has zero dynamic library dependencies.
+      - name: Build release binary
+        run: |
+          cargo zigbuild \
+            --release \
+            --target ${{ matrix.target }} \
+            --features vendored-libs \
+            -p sicario-cli
+
+      # ── Strip + package ──────────────────────────────────────────────────────
+      - name: Strip binary (Linux targets only)
+        if: ${{ contains(matrix.target, 'linux') }}
+        run: |
+          strip target/${{ matrix.target }}/release/sicario
+
+      - name: Package binary into tarball
+        shell: bash
+        run: |
+          BINARY=target/${{ matrix.target }}/release/sicario
+          ARCHIVE=${{ matrix.artifact_name }}.tar.gz
+          tar -czf "$ARCHIVE" -C "$(dirname $BINARY)" "$(basename $BINARY)"
+          echo "ARCHIVE=$ARCHIVE" >> "$GITHUB_ENV"
+
+      # ── SHA-256 checksum ─────────────────────────────────────────────────────
+      - name: Generate SHA-256 checksum
+        run: |
+          sha256sum "${{ env.ARCHIVE }}" > "${{ env.ARCHIVE }}.sha256"
+
+      # ── Upload to GitHub Release ─────────────────────────────────────────────
+      # softprops/action-gh-release will create the release if it doesn't exist
+      # yet, or append to it if cargo-dist already created it.
+      - name: Upload to GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          files: |
+            ${{ env.ARCHIVE }}
+            ${{ env.ARCHIVE }}.sha256
+          # Don't overwrite a release body that cargo-dist may have already set.
+          generate_release_notes: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -46,6 +46,12 @@ pub struct ExecutionTrace {
     start_time: Instant,
 }
 
+impl Default for ExecutionTrace {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ExecutionTrace {
     /// Create a new execution trace.
     pub fn new() -> Self {
@@ -135,7 +141,7 @@ mod tests {
         let mut trace = ExecutionTrace::new();
         // Simulate some elapsed time by recording with custom duration
         trace.record_with_elapsed("Test action", Duration::from_millis(123));
-        
+
         let strings = trace.as_strings();
         assert!(strings[0].starts_with("0.12"));
         assert!(strings[0].ends_with(": Test action"));
