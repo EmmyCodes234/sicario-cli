@@ -70,20 +70,24 @@ Sicario is different:
 
 ## Capabilities
 
-| | Sicario | Semgrep | Bandit | ESLint Security |
-|---|:---:|:---:|:---:|:---:|
-| Multi-language (5+) | ✅ | ✅ | ❌ | ❌ |
-| Secret scanning | ✅ | ❌ | ❌ | ❌ |
-| SCA / dependency audit | ✅ | ✅ | ❌ | ❌ |
-| Data-flow reachability | ✅ | ✅ | ❌ | ❌ |
-| AI auto-remediation | ✅ | ❌ | ❌ | ❌ |
-| Interactive TUI | ✅ | ❌ | ❌ | ❌ |
-| MCP server (AI assistants) | ✅ | ❌ | ❌ | ❌ |
-| Single static binary | ✅ | ❌ | ❌ | ❌ |
-| SARIF + OWASP reports | ✅ | ✅ | ❌ | ❌ |
-| Cloud dashboard + orgs | ✅ | ✅ | ❌ | ❌ |
-| Zero runtime dependencies | ✅ | ❌ | ❌ | ❌ |
-| Zero source code exfiltration | ✅ | ❌ | ✅ | ✅ |
+| | Sicario | Snyk | Checkmarx | Semgrep | Bandit |
+|---|:---:|:---:|:---:|:---:|:---:|
+| Multi-language (5+) | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Secret scanning | ✅ | ✅ | ✅ | ❌ | ❌ |
+| SCA / dependency audit | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Data-flow reachability | ✅ | ✅ | ✅ | ✅ | ❌ |
+| AI auto-remediation | ✅ | ⚠️ | ⚠️ | ❌ | ❌ |
+| Interactive TUI | ✅ | ❌ | ❌ | ❌ | ❌ |
+| MCP server (AI assistants) | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Single static binary | ✅ | ❌ | ❌ | ❌ | ❌ |
+| SARIF + OWASP reports | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Cloud dashboard + orgs | ✅ | ✅ | ✅ | ✅ | ❌ |
+| Zero runtime dependencies | ✅ | ❌ | ❌ | ❌ | ❌ |
+| Zero source code exfiltration | ✅ | ❌ | ❌ | ❌ | ✅ |
+| Open source | ✅ | ⚠️ | ❌ | ⚠️ | ✅ |
+| Free tier | ✅ | ✅ | ❌ | ✅ | ✅ |
+
+<sub>⚠️ Partial — Snyk and Checkmarx offer AI fix suggestions in their cloud UI, not automated local patch application. Semgrep OSS is open source; Semgrep Pro is proprietary. Snyk CLI is open source; Snyk platform is proprietary.</sub>
 
 ---
 
