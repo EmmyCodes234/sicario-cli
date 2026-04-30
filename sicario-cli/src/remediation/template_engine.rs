@@ -470,6 +470,94 @@ impl Default for TemplateRegistry {
         r.register_rule("js-readfilesync-user-input",   Box::new(FileReadSyncTemplate));
         r.register_rule("node-sync-file-read",          Box::new(FileReadSyncTemplate));
 
+        // ── Sprint 4: SQL + TLS/SSRF + Django/Flask + Cloud/IaC + React ──────
+        r.register_rule("js-sql-string-concat",         Box::new(SqlStringConcatTemplate));
+        r.register_rule("py-sql-string-concat",         Box::new(SqlStringConcatTemplate));
+        r.register_rule("go-sql-string-concat",         Box::new(SqlStringConcatTemplate));
+        r.register_rule("sql-string-concat",            Box::new(SqlStringConcatTemplate));
+
+        r.register_rule("js-sql-template-string",       Box::new(SqlTemplateStringTemplate));
+        r.register_rule("node-sql-template-literal",    Box::new(SqlTemplateStringTemplate));
+
+        // TLS
+        r.register_rule("js-tls-min-version",           Box::new(TlsMinVersionTemplate));
+        r.register_rule("go-tls-min-version",           Box::new(TlsMinVersionTemplate));
+        r.register_rule("tls-insecure-version",         Box::new(TlsMinVersionTemplate));
+
+        r.register_rule("js-tls-reject-unauthorized",   Box::new(TlsCertVerifyDisabledNodeTemplate));
+        r.register_rule("node-tls-verify-disabled",     Box::new(TlsCertVerifyDisabledNodeTemplate));
+
+        r.register_rule("go-tls-insecure-skip-verify",  Box::new(TlsCertVerifyDisabledGoTemplate));
+        r.register_rule("go-insecure-skip-verify",      Box::new(TlsCertVerifyDisabledGoTemplate));
+
+        // SSRF
+        r.register_rule("js-ssrf-axios",                Box::new(SsrfHttpGetUserInputTemplate));
+        r.register_rule("py-ssrf-requests",             Box::new(SsrfHttpGetUserInputTemplate));
+        r.register_rule("ssrf-http-get",                Box::new(SsrfHttpGetUserInputTemplate));
+
+        r.register_rule("js-ssrf-fetch",                Box::new(SsrfFetchUserInputTemplate));
+        r.register_rule("node-fetch-ssrf",              Box::new(SsrfFetchUserInputTemplate));
+
+        // Django
+        r.register_rule("django-debug-true",            Box::new(DjangoDebugTrueTemplate));
+        r.register_rule("py-django-debug",              Box::new(DjangoDebugTrueTemplate));
+
+        r.register_rule("django-secret-key-hardcoded",  Box::new(DjangoSecretKeyHardcodedTemplate));
+        r.register_rule("py-django-secret-key",         Box::new(DjangoSecretKeyHardcodedTemplate));
+
+        r.register_cwe("183",  Box::new(DjangoAllowedHostsWildcardTemplate));
+        r.register_rule("django-allowed-hosts-wildcard", Box::new(DjangoAllowedHostsWildcardTemplate));
+
+        r.register_cwe("352",  Box::new(DjangoCsrfExemptTemplate));
+        r.register_rule("django-csrf-exempt",           Box::new(DjangoCsrfExemptTemplate));
+        r.register_rule("py-csrf-exempt",               Box::new(DjangoCsrfExemptTemplate));
+
+        r.register_cwe("215",  Box::new(FlaskDebugTrueTemplate));
+        r.register_rule("flask-debug-true",             Box::new(FlaskDebugTrueTemplate));
+        r.register_rule("py-flask-debug",               Box::new(FlaskDebugTrueTemplate));
+
+        r.register_rule("flask-secret-key-hardcoded",   Box::new(FlaskSecretKeyHardcodedTemplate));
+        r.register_rule("py-flask-secret-key",          Box::new(FlaskSecretKeyHardcodedTemplate));
+
+        r.register_rule("flask-sqlalchemy-uri-hardcoded", Box::new(FlaskSqlAlchemyUriHardcodedTemplate));
+        r.register_rule("py-sqlalchemy-uri",            Box::new(FlaskSqlAlchemyUriHardcodedTemplate));
+
+        // Cloud / IaC
+        r.register_rule("aws-hardcoded-access-key",     Box::new(AwsHardcodedAccessKeyTemplate));
+        r.register_rule("js-aws-hardcoded-key",         Box::new(AwsHardcodedAccessKeyTemplate));
+        r.register_rule("py-aws-hardcoded-key",         Box::new(AwsHardcodedAccessKeyTemplate));
+
+        r.register_rule("aws-s3-public-read-acl",       Box::new(AwsS3PublicReadAclTemplate));
+        r.register_rule("js-s3-public-acl",             Box::new(AwsS3PublicReadAclTemplate));
+
+        r.register_cwe("1104", Box::new(IacDockerLatestTagTemplate));
+        r.register_rule("dockerfile-latest-tag",        Box::new(IacDockerLatestTagTemplate));
+        r.register_rule("iac-docker-latest",            Box::new(IacDockerLatestTagTemplate));
+
+        r.register_cwe("706",  Box::new(IacDockerAddInsteadOfCopyTemplate));
+        r.register_rule("dockerfile-add-instead-of-copy", Box::new(IacDockerAddInsteadOfCopyTemplate));
+        r.register_rule("iac-docker-add",               Box::new(IacDockerAddInsteadOfCopyTemplate));
+
+        // IacEnvFileHardcoded — registered by rule ID only (no CWE-798 collision with other templates)
+        r.register_rule("env-file-hardcoded-secret",    Box::new(IacEnvFileHardcodedTemplate));
+        r.register_rule("dotenv-hardcoded-value",       Box::new(IacEnvFileHardcodedTemplate));
+
+        // React / Frontend
+        r.register_rule("react-href-javascript",        Box::new(ReactHrefJavascriptTemplate));
+        r.register_rule("js-href-user-input",           Box::new(ReactHrefJavascriptTemplate));
+
+        r.register_cwe("601",  Box::new(ReactWindowLocationTemplate));
+        r.register_rule("js-window-location-redirect",  Box::new(ReactWindowLocationTemplate));
+        r.register_rule("react-open-redirect",          Box::new(ReactWindowLocationTemplate));
+
+        r.register_cwe("922",  Box::new(ReactLocalStorageTokenTemplate));
+        r.register_rule("js-localstorage-token",        Box::new(ReactLocalStorageTokenTemplate));
+        r.register_rule("react-localstorage-auth",      Box::new(ReactLocalStorageTokenTemplate));
+
+        r.register_cwe("362",  Box::new(ReactUseEffectMissingDepTemplate));
+        r.register_rule("react-useeffect-missing-dep",  Box::new(ReactUseEffectMissingDepTemplate));
+        r.register_rule("js-useeffect-stale-closure",   Box::new(ReactUseEffectMissingDepTemplate));
+
         r
     }
 }
@@ -4649,3 +4737,937 @@ mod sprint3_tests {
     }
 }
 
+// ── Sprint 4: SQL + TLS/SSRF + Django/Flask + Cloud/IaC + React (23 templates)
+
+// ── Domain 3 (remaining): SQL Injection ──────────────────────────────────────
+
+// ── 58. SqlStringConcatTemplate (CWE-89) ─────────────────────────────────────
+
+/// Replaces string concatenation inside SQL query calls with a parameterized comment.
+///
+/// Full parameterized rewrite is context-dependent (varies by ORM/driver), so
+/// we inject a targeted SICARIO FIX comment on the vulnerable line and preserve
+/// the original for the developer to complete.
+pub struct SqlStringConcatTemplate;
+
+impl PatchTemplate for SqlStringConcatTemplate {
+    fn name(&self) -> &'static str { "SqlStringConcat" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        let lower = line.to_lowercase();
+        // Must be inside a query call
+        let is_query = lower.contains(".query(") || lower.contains("cursor.execute(")
+            || lower.contains("db.exec(") || lower.contains("db.query(")
+            || lower.contains(".execute(") || lower.contains("db.raw(");
+        if !is_query { return None; }
+        // Must have string concatenation or f-string
+        if !line.contains(" + ") && !line.contains("f\"") && !line.contains("f'")
+            && !line.contains('`') { return None; }
+        // Must reference user input
+        if !line.contains("req.") && !line.contains("user") && !line.contains("input")
+            && !line.contains("param") && !line.contains("body") { return None; }
+
+        let indent = get_indent(line);
+        let comment = match lang {
+            Language::Python => format!("{indent}# SICARIO FIX (CWE-89): use parameterized query — replace string concat with %s placeholder"),
+            Language::Go     => format!("{indent}// SICARIO FIX (CWE-89): use parameterized query — replace string concat with $1 placeholder"),
+            _                => format!("{indent}// SICARIO FIX (CWE-89): use parameterized query — replace string concat with $1 placeholder"),
+        };
+        Some(format!("{comment}\n{line}"))
+    }
+}
+
+// ── 59. SqlTemplateStringTemplate (CWE-89) ───────────────────────────────────
+
+/// Flags template literals used as SQL query strings in JS/TS.
+pub struct SqlTemplateStringTemplate;
+
+impl PatchTemplate for SqlTemplateStringTemplate {
+    fn name(&self) -> &'static str { "SqlTemplateString" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        let lower = line.to_lowercase();
+        if !lower.contains(".query(") && !lower.contains(".execute(") { return None; }
+        // Must use a template literal with interpolation
+        if !line.contains('`') || !line.contains("${") { return None; }
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}// SICARIO FIX (CWE-89): replace template literal with parameterized query — use $1, $2 placeholders and pass values as array\n{line}"
+        ))
+    }
+}
+
+// ── Domain 7: Network & TLS ───────────────────────────────────────────────────
+
+// ── 60. TlsMinVersionTemplate (CWE-326) ──────────────────────────────────────
+
+/// Replaces insecure TLS version strings with TLSv1.2.
+pub struct TlsMinVersionTemplate;
+
+impl PatchTemplate for TlsMinVersionTemplate {
+    fn name(&self) -> &'static str { "TlsMinVersion" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        let lower = line.to_lowercase();
+        if !lower.contains("tlsv1") && !lower.contains("minversion") { return None; }
+        let fixed = line
+            .replace("TLSv1_method", "TLSv1_2_method")
+            .replace("TLSv1.1_method", "TLSv1_2_method")
+            .replace("minVersion: 'TLSv1'", "minVersion: 'TLSv1.2'")
+            .replace("minVersion: 'TLSv1.1'", "minVersion: 'TLSv1.2'")
+            .replace("minVersion: \"TLSv1\"", "minVersion: \"TLSv1.2\"")
+            .replace("minVersion: \"TLSv1.1\"", "minVersion: \"TLSv1.2\"")
+            // Go: tls.VersionTLS10 / tls.VersionTLS11
+            .replace("tls.VersionTLS10", "tls.VersionTLS12")
+            .replace("tls.VersionTLS11", "tls.VersionTLS12");
+        if fixed == line { return None; }
+        Some(fixed)
+    }
+}
+
+// ── 61. TlsCertVerifyDisabledNodeTemplate (CWE-295) ──────────────────────────
+
+/// Fixes disabled TLS certificate verification in Node.js.
+pub struct TlsCertVerifyDisabledNodeTemplate;
+
+impl PatchTemplate for TlsCertVerifyDisabledNodeTemplate {
+    fn name(&self) -> &'static str { "TlsCertVerifyDisabledNode" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        if line.contains("NODE_TLS_REJECT_UNAUTHORIZED") && line.contains("'0'") {
+            return Some(line
+                .replace("= '0'", "= '1'")
+                .replace("= \"0\"", "= \"1\""));
+        }
+        if line.contains("rejectUnauthorized: false") || line.contains("rejectUnauthorized:false") {
+            return Some(line
+                .replace("rejectUnauthorized: false", "rejectUnauthorized: true")
+                .replace("rejectUnauthorized:false", "rejectUnauthorized: true"));
+        }
+        None
+    }
+}
+
+// ── 62. TlsCertVerifyDisabledGoTemplate (CWE-295) ────────────────────────────
+
+/// Replaces `InsecureSkipVerify: true` with `false` in Go TLS configs.
+pub struct TlsCertVerifyDisabledGoTemplate;
+
+impl PatchTemplate for TlsCertVerifyDisabledGoTemplate {
+    fn name(&self) -> &'static str { "TlsCertVerifyDisabledGo" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Go { return None; }
+        if !line.contains("InsecureSkipVerify: true") && !line.contains("InsecureSkipVerify:true") {
+            return None;
+        }
+        Some(line
+            .replace("InsecureSkipVerify: true", "InsecureSkipVerify: false")
+            .replace("InsecureSkipVerify:true", "InsecureSkipVerify: false"))
+    }
+}
+
+// ── 63. SsrfHttpGetUserInputTemplate (CWE-918) ───────────────────────────────
+
+/// Prepends an allowlist guard before axios/requests calls with user-controlled URLs.
+pub struct SsrfHttpGetUserInputTemplate;
+
+impl PatchTemplate for SsrfHttpGetUserInputTemplate {
+    fn name(&self) -> &'static str { "SsrfHttpGetUserInput" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        let lower = line.to_lowercase();
+        let is_http_call = lower.contains("axios.get(") || lower.contains("axios.post(")
+            || lower.contains("requests.get(") || lower.contains("requests.post(")
+            || lower.contains("http.get(") || lower.contains("http.post(");
+        if !is_http_call { return None; }
+        // Must use user-controlled URL
+        if !line.contains("req.body.") && !line.contains("req.query.")
+            && !line.contains("user_url") && !line.contains("userUrl")
+            && !line.contains("url)") { return None; }
+        if line.contains("ALLOWED_HOSTS") || line.contains("allowlist") { return None; }
+
+        let indent = get_indent(line);
+        match lang {
+            Language::JavaScript | Language::TypeScript => Some(format!(
+                "{indent}const _parsed = new URL(req.body.url || req.query.url);\n\
+                 {indent}if (!ALLOWED_HOSTS.has(_parsed.hostname)) throw new Error('SSRF blocked');\n\
+                 {line}"
+            )),
+            Language::Python => Some(format!(
+                "{indent}from urllib.parse import urlparse as _urlparse\n\
+                 {indent}_parsed = _urlparse(user_url)\n\
+                 {indent}if _parsed.hostname not in ALLOWED_HOSTS: raise ValueError('SSRF blocked')\n\
+                 {line}"
+            )),
+            _ => None,
+        }
+    }
+}
+
+// ── 64. SsrfFetchUserInputTemplate (CWE-918) ─────────────────────────────────
+
+/// Prepends an allowlist guard before `fetch(userInput)` calls.
+pub struct SsrfFetchUserInputTemplate;
+
+impl PatchTemplate for SsrfFetchUserInputTemplate {
+    fn name(&self) -> &'static str { "SsrfFetchUserInput" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        if !line.contains("fetch(") { return None; }
+        if !line.contains("req.") && !line.contains("userInput") && !line.contains("url") {
+            return None;
+        }
+        if line.contains("ALLOWED_HOSTS") { return None; }
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}const _fetchUrl = new URL(userInput || req.query.url);\n\
+             {indent}if (!ALLOWED_HOSTS.has(_fetchUrl.hostname)) throw new Error('SSRF blocked');\n\
+             {line}"
+        ))
+    }
+}
+
+// ── Domain 8: Django / Flask ──────────────────────────────────────────────────
+
+// ── 65. DjangoDebugTrueTemplate (CWE-215) ────────────────────────────────────
+
+/// Replaces `DEBUG = True` with an env-var-driven value.
+pub struct DjangoDebugTrueTemplate;
+
+impl PatchTemplate for DjangoDebugTrueTemplate {
+    fn name(&self) -> &'static str { "DjangoDebugTrue" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        let trimmed = line.trim();
+        if trimmed != "DEBUG = True" && trimmed != "DEBUG=True" { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}DEBUG = os.environ.get('DJANGO_DEBUG', 'False') == 'True'"))
+    }
+}
+
+// ── 66. DjangoSecretKeyHardcodedTemplate (CWE-798) ───────────────────────────
+
+/// Replaces hardcoded `SECRET_KEY = '...'` with an env-var lookup.
+pub struct DjangoSecretKeyHardcodedTemplate;
+
+impl PatchTemplate for DjangoSecretKeyHardcodedTemplate {
+    fn name(&self) -> &'static str { "DjangoSecretKeyHardcoded" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        let trimmed = line.trim();
+        if !trimmed.starts_with("SECRET_KEY") { return None; }
+        if !trimmed.contains(" = ") { return None; }
+        // Must have a string literal value
+        let after_eq = trimmed.splitn(2, " = ").nth(1).unwrap_or("").trim();
+        if !after_eq.starts_with('\'') && !after_eq.starts_with('"') { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}SECRET_KEY = os.environ.get('DJANGO_SECRET_KEY')"))
+    }
+}
+
+// ── 67. DjangoAllowedHostsWildcardTemplate (CWE-183) ─────────────────────────
+
+/// Replaces `ALLOWED_HOSTS = ['*']` with an env-var-driven list.
+pub struct DjangoAllowedHostsWildcardTemplate;
+
+impl PatchTemplate for DjangoAllowedHostsWildcardTemplate {
+    fn name(&self) -> &'static str { "DjangoAllowedHostsWildcard" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        let trimmed = line.trim();
+        if !trimmed.starts_with("ALLOWED_HOSTS") { return None; }
+        if !trimmed.contains("'*'") && !trimmed.contains("\"*\"") { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', '').split(',')"))
+    }
+}
+
+// ── 68. DjangoCsrfExemptTemplate (CWE-352) ───────────────────────────────────
+
+/// Removes `@csrf_exempt` decorator and replaces with a comment.
+pub struct DjangoCsrfExemptTemplate;
+
+impl PatchTemplate for DjangoCsrfExemptTemplate {
+    fn name(&self) -> &'static str { "DjangoCsrfExempt" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        if !line.trim().starts_with("@csrf_exempt") { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}# SICARIO FIX: removed @csrf_exempt — ensure CSRF token is sent by client"))
+    }
+}
+
+// ── 69. FlaskDebugTrueTemplate (CWE-215) ─────────────────────────────────────
+
+/// Replaces `app.run(debug=True)` with an env-var-driven debug flag.
+pub struct FlaskDebugTrueTemplate;
+
+impl PatchTemplate for FlaskDebugTrueTemplate {
+    fn name(&self) -> &'static str { "FlaskDebugTrue" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        if !line.contains("debug=True") && !line.contains("debug = True")
+            && !line.contains("'DEBUG'] = True") && !line.contains("\"DEBUG\"] = True") {
+            return None;
+        }
+        let fixed = line
+            .replace("debug=True", "debug=os.environ.get('FLASK_DEBUG', 'False') == 'True'")
+            .replace("debug = True", "debug=os.environ.get('FLASK_DEBUG', 'False') == 'True'")
+            .replace("'DEBUG'] = True", "'DEBUG'] = os.environ.get('FLASK_DEBUG', 'False') == 'True'")
+            .replace("\"DEBUG\"] = True", "\"DEBUG\"] = os.environ.get('FLASK_DEBUG', 'False') == 'True'");
+        if fixed == line { return None; }
+        Some(fixed)
+    }
+}
+
+// ── 70. FlaskSecretKeyHardcodedTemplate (CWE-798) ────────────────────────────
+
+/// Replaces hardcoded Flask secret key with an env-var lookup.
+pub struct FlaskSecretKeyHardcodedTemplate;
+
+impl PatchTemplate for FlaskSecretKeyHardcodedTemplate {
+    fn name(&self) -> &'static str { "FlaskSecretKeyHardcoded" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        let lower = line.to_lowercase();
+        if !lower.contains("secret_key") { return None; }
+        // Must be an assignment with a string literal
+        if !line.contains(" = ") { return None; }
+        let after_eq = line.splitn(2, " = ").nth(1).unwrap_or("").trim();
+        if !after_eq.starts_with('\'') && !after_eq.starts_with('"') { return None; }
+        let indent = get_indent(line);
+        if line.contains("app.secret_key") {
+            return Some(format!("{indent}app.secret_key = os.environ.get('FLASK_SECRET_KEY')"));
+        }
+        if line.contains("'SECRET_KEY']") || line.contains("\"SECRET_KEY\"]") {
+            return Some(format!("{indent}app.config['SECRET_KEY'] = os.environ.get('FLASK_SECRET_KEY')"));
+        }
+        None
+    }
+}
+
+// ── 71. FlaskSqlAlchemyUriHardcodedTemplate (CWE-798) ────────────────────────
+
+/// Replaces hardcoded SQLAlchemy database URI with an env-var lookup.
+pub struct FlaskSqlAlchemyUriHardcodedTemplate;
+
+impl PatchTemplate for FlaskSqlAlchemyUriHardcodedTemplate {
+    fn name(&self) -> &'static str { "FlaskSqlAlchemyUriHardcoded" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        if lang != Language::Python { return None; }
+        if !line.contains("SQLALCHEMY_DATABASE_URI") { return None; }
+        if !line.contains(" = ") { return None; }
+        let after_eq = line.splitn(2, " = ").nth(1).unwrap_or("").trim();
+        if !after_eq.starts_with('\'') && !after_eq.starts_with('"') { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}SQLALCHEMY_DATABASE_URI = os.environ.get('DATABASE_URL')"))
+    }
+}
+
+// ── Domain 9: Cloud & Infrastructure ─────────────────────────────────────────
+
+// ── 72. AwsHardcodedAccessKeyTemplate (CWE-798) ───────────────────────────────
+
+/// Replaces hardcoded AWS access key IDs (starting with AKIA) with a comment.
+pub struct AwsHardcodedAccessKeyTemplate;
+
+impl PatchTemplate for AwsHardcodedAccessKeyTemplate {
+    fn name(&self) -> &'static str { "AwsHardcodedAccessKey" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        // AWS access key IDs always start with AKIA
+        if !line.contains("AKIA") { return None; }
+        let lower = line.to_lowercase();
+        if !lower.contains("accesskeyid") && !lower.contains("access_key_id")
+            && !lower.contains("aws_access") { return None; }
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}// SICARIO FIX (CWE-798): use IAM role or environment credentials — remove hardcoded AWS key\n\
+             {indent}// AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY should be set via environment or IAM role"
+        ))
+    }
+}
+
+// ── 73. AwsS3PublicReadAclTemplate (CWE-732) ──────────────────────────────────
+
+/// Removes `ACL: 'public-read'` / `ACL: 'public-read-write'` from S3 calls.
+pub struct AwsS3PublicReadAclTemplate;
+
+impl PatchTemplate for AwsS3PublicReadAclTemplate {
+    fn name(&self) -> &'static str { "AwsS3PublicReadAcl" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        if !line.contains("ACL:") && !line.contains("acl=") { return None; }
+        let lower = line.to_lowercase();
+        if !lower.contains("public-read") { return None; }
+        let fixed = line
+            .replace(", ACL: 'public-read'", "")
+            .replace(", ACL: 'public-read-write'", "")
+            .replace(", ACL: \"public-read\"", "")
+            .replace(", ACL: \"public-read-write\"", "")
+            .replace("ACL: 'public-read', ", "")
+            .replace("ACL: 'public-read-write', ", "")
+            .replace(", acl='public-read'", "")
+            .replace(", acl='public-read-write'", "");
+        if fixed == line { return None; }
+        Some(fixed)
+    }
+}
+
+// ── 74. IacDockerLatestTagTemplate (CWE-1104) ────────────────────────────────
+
+/// Replaces `:latest` in Dockerfile FROM instructions with a safer default.
+pub struct IacDockerLatestTagTemplate;
+
+impl PatchTemplate for IacDockerLatestTagTemplate {
+    fn name(&self) -> &'static str { "IacDockerLatestTag" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("FROM ") { return None; }
+        if !trimmed.contains(":latest") { return None; }
+        let lower = trimmed.to_lowercase();
+        let fixed = if lower.contains("node") {
+            trimmed.replace(":latest", ":lts-alpine")
+        } else if lower.contains("python") {
+            trimmed.replace(":latest", ":slim")
+        } else if lower.contains("ubuntu") || lower.contains("debian") {
+            trimmed.replace(":latest", ":stable-slim")
+        } else {
+            trimmed.replace(":latest", ":stable")
+        };
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}{fixed}\n{indent}# SICARIO FIX: pin to a specific digest for reproducible builds"
+        ))
+    }
+}
+
+// ── 75. IacDockerAddInsteadOfCopyTemplate (CWE-706) ──────────────────────────
+
+/// Replaces `ADD <local_path>` with `COPY` in Dockerfiles.
+pub struct IacDockerAddInsteadOfCopyTemplate;
+
+impl PatchTemplate for IacDockerAddInsteadOfCopyTemplate {
+    fn name(&self) -> &'static str { "IacDockerAddInsteadOfCopy" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("ADD ") { return None; }
+        // Don't replace ADD with a URL argument (ADD http://... is intentional)
+        let arg = trimmed.trim_start_matches("ADD ").trim();
+        if arg.starts_with("http://") || arg.starts_with("https://") { return None; }
+        let indent = get_indent(line);
+        Some(format!("{indent}{}", trimmed.replacen("ADD ", "COPY ", 1)))
+    }
+}
+
+// ── Domain 10: React & Frontend ───────────────────────────────────────────────
+
+// ── 76. ReactHrefJavascriptTemplate (CWE-79) ─────────────────────────────────
+
+/// Wraps `href={userInput}` with a URL scheme validation guard.
+pub struct ReactHrefJavascriptTemplate;
+
+impl PatchTemplate for ReactHrefJavascriptTemplate {
+    fn name(&self) -> &'static str { "ReactHrefJavascript" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        if !line.contains("href={") { return None; }
+        if line.contains("https?://") || line.contains("startsWith") { return None; }
+        // Wrap the href value with a scheme check
+        let fixed = line
+            .replace("href={userInput}", "href={/^https?:\\/\\//.test(userInput) ? userInput : '#'}")
+            .replace("href={url}", "href={/^https?:\\/\\//.test(url) ? url : '#'}");
+        if fixed == line { return None; }
+        Some(fixed)
+    }
+}
+
+// ── 77. ReactWindowLocationTemplate (CWE-601) ────────────────────────────────
+
+/// Prepends a URL validation guard before `window.location.href = userInput`.
+pub struct ReactWindowLocationTemplate;
+
+impl PatchTemplate for ReactWindowLocationTemplate {
+    fn name(&self) -> &'static str { "ReactWindowLocation" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        if !line.contains("window.location.href") && !line.contains("window.location.replace") {
+            return None;
+        }
+        if line.contains("startsWith") || line.contains("test(") { return None; }
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}if (!/^\\//.test(userInput) && !/^https:\\/\\//.test(userInput)) throw new Error('Redirect blocked');\n{line}"
+        ))
+    }
+}
+
+// ── 78. ReactLocalStorageTokenTemplate (CWE-922) ─────────────────────────────
+
+/// Replaces `localStorage.setItem('token', ...)` with a comment.
+pub struct ReactLocalStorageTokenTemplate;
+
+impl PatchTemplate for ReactLocalStorageTokenTemplate {
+    fn name(&self) -> &'static str { "ReactLocalStorageToken" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        if !line.contains("localStorage.setItem(") { return None; }
+        let lower = line.to_lowercase();
+        if !lower.contains("token") && !lower.contains("jwt") && !lower.contains("auth") {
+            return None;
+        }
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}// SICARIO FIX (CWE-922): store auth tokens in httpOnly cookies, not localStorage\n\
+             {indent}// localStorage is accessible to XSS — use Set-Cookie with HttpOnly; Secure; SameSite=Strict"
+        ))
+    }
+}
+
+// ── 79. ReactUseEffectMissingDepTemplate (CWE-362) ───────────────────────────
+
+/// Replaces empty `[]` dependency array in useEffect when the callback uses outer vars.
+///
+/// Heuristic: if the line contains `useEffect(` with `}, [])` and the callback
+/// references a variable that looks like a prop/state (camelCase identifier),
+/// replace `[]` with `[<detected_var>]`.
+pub struct ReactUseEffectMissingDepTemplate;
+
+impl PatchTemplate for ReactUseEffectMissingDepTemplate {
+    fn name(&self) -> &'static str { "ReactUseEffectMissingDep" }
+
+    fn generate_patch(&self, line: &str, lang: Language) -> Option<String> {
+        match lang { Language::JavaScript | Language::TypeScript => {} _ => return None }
+        // Must end with }, []) — the empty dep array pattern
+        let trimmed = line.trim_end();
+        if !trimmed.ends_with("}, [])") && !trimmed.ends_with("}, []);") { return None; }
+        if !line.contains("useEffect(") { return None; }
+        // Extract the callback body to find referenced variables
+        // Simple heuristic: look for fetchData(X) or similar patterns
+        let var = extract_useeffect_dep(line)?;
+        let dep_array = format!("[{var}]");
+        // Build replacement strings without format! to avoid brace escaping issues
+        let repl      = ["}," , " ", &dep_array, ")"].concat();   // }, [userId])
+        let repl_semi = ["}," , " ", &dep_array, ");"].concat();  // }, [userId]);
+        let fixed = if trimmed.ends_with("}, []);") {
+            line.replace("}, []);", &repl_semi)
+        } else {
+            line.replace("}, [])", &repl)
+        };
+        if fixed == line { return None; }
+        Some(fixed)
+    }
+}
+
+// ── 80. IacEnvFileHardcodedTemplate (CWE-798) ────────────────────────────────
+
+/// Replaces hardcoded secret values in `.env` files with a placeholder.
+///
+/// Fires on lines matching `KEY=<non-empty-literal-value>` that look like
+/// real secrets (not already a reference like `${VAR}` or `$(cmd)`).
+pub struct IacEnvFileHardcodedTemplate;
+
+impl PatchTemplate for IacEnvFileHardcodedTemplate {
+    fn name(&self) -> &'static str { "IacEnvFileHardcoded" }
+
+    fn generate_patch(&self, line: &str, _lang: Language) -> Option<String> {
+        let trimmed = line.trim();
+        // Must be KEY=VALUE format (no spaces around =)
+        if trimmed.starts_with('#') || trimmed.is_empty() { return None; }
+        let eq_pos = trimmed.find('=')?;
+        let key = &trimmed[..eq_pos];
+        let value = &trimmed[eq_pos + 1..];
+
+        // Key must be UPPER_SNAKE_CASE (env var convention)
+        if !key.chars().all(|c| c.is_ascii_uppercase() || c == '_' || c.is_ascii_digit()) {
+            return None;
+        }
+        // Value must be non-empty and not already a reference
+        if value.is_empty() || value.starts_with("${") || value.starts_with("$(") {
+            return None;
+        }
+        // Skip obviously safe values
+        if value == "true" || value == "false" || value == "0" || value == "1"
+            || value == "localhost" || value == "development" || value == "production" {
+            return None;
+        }
+        // Must look like a secret (contains letters + digits, or is quoted)
+        let is_secret = value.len() > 4
+            && (value.starts_with('"') || value.starts_with('\'')
+                || value.chars().any(|c| c.is_ascii_digit())
+                    && value.chars().any(|c| c.is_ascii_alphabetic()));
+        if !is_secret { return None; }
+
+        let indent = get_indent(line);
+        Some(format!(
+            "{indent}# SICARIO: do not commit real secrets — use a secrets manager or CI/CD env vars\n\
+             {indent}{key}=<REPLACE_WITH_REAL_VALUE>"
+        ))
+    }
+}
+
+/// Extract the most likely missing dependency from a useEffect callback.
+fn extract_useeffect_dep(line: &str) -> Option<&str> {
+    // Look for patterns like fetchData(userId), loadUser(id), etc.
+    // Extract the argument of the first function call inside the callback
+    let patterns = ["fetchData(", "loadData(", "fetchUser(", "loadUser(",
+                    "getData(", "getUser(", "fetch(", "load("];
+    for pat in &patterns {
+        if let Some(pos) = line.find(pat) {
+            let after = &line[pos + pat.len()..];
+            let end = after.find(|c: char| !c.is_alphanumeric() && c != '_').unwrap_or(after.len());
+            let var = &after[..end];
+            if !var.is_empty() && var.chars().next().map(|c| c.is_lowercase()).unwrap_or(false) {
+                return Some(var);
+            }
+        }
+    }
+    None
+}
+
+
+
+// ── Sprint 4 tests ────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod sprint4_tests {
+    use super::*;
+
+    fn js() -> Language { Language::JavaScript }
+    fn py() -> Language { Language::Python }
+    fn go() -> Language { Language::Go }
+
+    #[test]
+    fn test_sql_concat_comment_injected() {
+        let t = SqlStringConcatTemplate;
+        let line = "    db.query('SELECT * FROM users WHERE id = ' + req.body.id);";
+        let result = t.generate_patch(line, js()).unwrap();
+        assert!(result.contains("// SICARIO FIX (CWE-89)"));
+        assert!(result.contains("db.query("));
+    }
+
+    #[test]
+    fn test_sql_concat_no_user_input() {
+        let t = SqlStringConcatTemplate;
+        assert!(t.generate_patch("    db.query('SELECT * FROM users');", js()).is_none());
+    }
+
+    #[test]
+    fn test_sql_template_string_flagged() {
+        let t = SqlTemplateStringTemplate;
+        let line = "    db.query(`SELECT * FROM users WHERE id = ${userId}`);";
+        let result = t.generate_patch(line, js()).unwrap();
+        assert!(result.contains("// SICARIO FIX (CWE-89)"));
+    }
+
+    #[test]
+    fn test_sql_template_no_interpolation() {
+        let t = SqlTemplateStringTemplate;
+        assert!(t.generate_patch("    db.query(`SELECT * FROM users`);", js()).is_none());
+    }
+
+    #[test]
+    fn test_tls_min_version_node() {
+        let t = TlsMinVersionTemplate;
+        let result = t.generate_patch("    tls.createServer({ minVersion: 'TLSv1' })", js()).unwrap();
+        assert!(result.contains("TLSv1.2"));
+        assert!(!result.contains("minVersion: 'TLSv1'"));
+    }
+
+    #[test]
+    fn test_tls_min_version_go() {
+        let t = TlsMinVersionTemplate;
+        let result = t.generate_patch("\tMinVersion: tls.VersionTLS10,", go()).unwrap();
+        assert!(result.contains("VersionTLS12"));
+    }
+
+    #[test]
+    fn test_tls_already_v12() {
+        let t = TlsMinVersionTemplate;
+        assert!(t.generate_patch("    minVersion: 'TLSv1.2'", js()).is_none());
+    }
+
+    #[test]
+    fn test_tls_reject_unauthorized_fixed() {
+        let t = TlsCertVerifyDisabledNodeTemplate;
+        let result = t.generate_patch("    const opts = { rejectUnauthorized: false };", js()).unwrap();
+        assert!(result.contains("rejectUnauthorized: true"));
+    }
+
+    #[test]
+    fn test_tls_node_env_fixed() {
+        let t = TlsCertVerifyDisabledNodeTemplate;
+        let result = t.generate_patch("    process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';", js()).unwrap();
+        assert!(result.contains("= '1'"));
+    }
+
+    #[test]
+    fn test_go_insecure_skip_verify_fixed() {
+        let t = TlsCertVerifyDisabledGoTemplate;
+        let result = t.generate_patch("\t\tInsecureSkipVerify: true,", go()).unwrap();
+        assert!(result.contains("InsecureSkipVerify: false"));
+    }
+
+    #[test]
+    fn test_go_insecure_skip_verify_wrong_lang() {
+        let t = TlsCertVerifyDisabledGoTemplate;
+        assert!(t.generate_patch("InsecureSkipVerify: true", js()).is_none());
+    }
+
+    #[test]
+    fn test_ssrf_axios_guard_injected() {
+        let t = SsrfHttpGetUserInputTemplate;
+        let result = t.generate_patch("    const resp = await axios.get(req.body.url);", js()).unwrap();
+        assert!(result.contains("ALLOWED_HOSTS"));
+        assert!(result.contains("SSRF blocked"));
+        assert!(result.contains("axios.get("));
+    }
+
+    #[test]
+    fn test_ssrf_already_guarded() {
+        let t = SsrfHttpGetUserInputTemplate;
+        assert!(t.generate_patch("    if (!ALLOWED_HOSTS.has(h)) throw new Error(); axios.get(url);", js()).is_none());
+    }
+
+    #[test]
+    fn test_ssrf_fetch_guard_injected() {
+        let t = SsrfFetchUserInputTemplate;
+        let result = t.generate_patch("    const r = await fetch(req.query.url);", js()).unwrap();
+        assert!(result.contains("ALLOWED_HOSTS"));
+        assert!(result.contains("fetch("));
+    }
+
+    #[test]
+    fn test_django_debug_replaced() {
+        let t = DjangoDebugTrueTemplate;
+        let result = t.generate_patch("DEBUG = True", py()).unwrap();
+        assert!(result.contains("os.environ.get('DJANGO_DEBUG'"));
+        assert!(!result.contains("DEBUG = True"));
+    }
+
+    #[test]
+    fn test_django_debug_false_untouched() {
+        let t = DjangoDebugTrueTemplate;
+        assert!(t.generate_patch("DEBUG = False", py()).is_none());
+    }
+
+    #[test]
+    fn test_django_secret_key_replaced() {
+        let t = DjangoSecretKeyHardcodedTemplate;
+        let result = t.generate_patch("SECRET_KEY = 'django-insecure-abc123'", py()).unwrap();
+        assert!(result.contains("os.environ.get('DJANGO_SECRET_KEY')"));
+    }
+
+    #[test]
+    fn test_django_allowed_hosts_replaced() {
+        let t = DjangoAllowedHostsWildcardTemplate;
+        let result = t.generate_patch("ALLOWED_HOSTS = ['*']", py()).unwrap();
+        assert!(result.contains("os.environ.get('ALLOWED_HOSTS'"));
+        assert!(result.contains(".split(',')"));
+    }
+
+    #[test]
+    fn test_csrf_exempt_removed() {
+        let t = DjangoCsrfExemptTemplate;
+        let result = t.generate_patch("@csrf_exempt", py()).unwrap();
+        assert!(result.contains("# SICARIO FIX"));
+        assert!(result.starts_with('#'));
+    }
+
+    #[test]
+    fn test_flask_debug_replaced() {
+        let t = FlaskDebugTrueTemplate;
+        let result = t.generate_patch("    app.run(debug=True)", py()).unwrap();
+        assert!(result.contains("os.environ.get('FLASK_DEBUG'"));
+    }
+
+    #[test]
+    fn test_flask_secret_key_replaced() {
+        let t = FlaskSecretKeyHardcodedTemplate;
+        let result = t.generate_patch("    app.secret_key = 'my-secret'", py()).unwrap();
+        assert!(result.contains("os.environ.get('FLASK_SECRET_KEY')"));
+    }
+
+    #[test]
+    fn test_sqlalchemy_uri_replaced() {
+        let t = FlaskSqlAlchemyUriHardcodedTemplate;
+        let result = t.generate_patch("SQLALCHEMY_DATABASE_URI = 'postgresql://user:pass@localhost/db'", py()).unwrap();
+        assert!(result.contains("os.environ.get('DATABASE_URL')"));
+    }
+
+    #[test]
+    fn test_aws_key_comment_injected() {
+        let t = AwsHardcodedAccessKeyTemplate;
+        let result = t.generate_patch("    accessKeyId: 'AKIAIOSFODNN7EXAMPLE',", js()).unwrap();
+        assert!(result.contains("// SICARIO FIX (CWE-798)"));
+        assert!(result.contains("IAM role"));
+    }
+
+    #[test]
+    fn test_aws_key_no_akia() {
+        let t = AwsHardcodedAccessKeyTemplate;
+        assert!(t.generate_patch("    accessKeyId: process.env.AWS_ACCESS_KEY_ID,", js()).is_none());
+    }
+
+    #[test]
+    fn test_s3_public_read_removed() {
+        let t = AwsS3PublicReadAclTemplate;
+        let line = "    s3.putObject({ Bucket: 'my-bucket', Key: 'file', ACL: 'public-read', Body: data });";
+        let result = t.generate_patch(line, js()).unwrap();
+        assert!(!result.contains("ACL: 'public-read'"));
+        assert!(result.contains("Bucket:"));
+    }
+
+    #[test]
+    fn test_docker_latest_node_replaced() {
+        let t = IacDockerLatestTagTemplate;
+        let result = t.generate_patch("FROM node:latest", js()).unwrap();
+        assert!(result.contains("lts-alpine"));
+        assert!(!result.contains(":latest"));
+    }
+
+    #[test]
+    fn test_docker_latest_python_replaced() {
+        let t = IacDockerLatestTagTemplate;
+        let result = t.generate_patch("FROM python:latest", js()).unwrap();
+        assert!(result.contains(":slim"));
+    }
+
+    #[test]
+    fn test_docker_pinned_not_replaced() {
+        let t = IacDockerLatestTagTemplate;
+        assert!(t.generate_patch("FROM node:18-alpine", js()).is_none());
+    }
+
+    #[test]
+    fn test_docker_add_replaced_with_copy() {
+        let t = IacDockerAddInsteadOfCopyTemplate;
+        let result = t.generate_patch("ADD ./app /app", js()).unwrap();
+        assert!(result.starts_with("COPY"));
+        assert!(!result.contains("ADD "));
+    }
+
+    #[test]
+    fn test_docker_add_url_not_replaced() {
+        let t = IacDockerAddInsteadOfCopyTemplate;
+        assert!(t.generate_patch("ADD https://example.com/file.tar.gz /tmp/", js()).is_none());
+    }
+
+    #[test]
+    fn test_env_file_secret_replaced() {
+        let t = IacEnvFileHardcodedTemplate;
+        let result = t.generate_patch("DATABASE_PASSWORD=super_secret_123", js()).unwrap();
+        assert!(result.contains("# SICARIO:"));
+        assert!(result.contains("<REPLACE_WITH_REAL_VALUE>"));
+    }
+
+    #[test]
+    fn test_env_file_empty_value_skipped() {
+        let t = IacEnvFileHardcodedTemplate;
+        assert!(t.generate_patch("DATABASE_PASSWORD=", js()).is_none());
+    }
+
+    #[test]
+    fn test_env_file_reference_skipped() {
+        let t = IacEnvFileHardcodedTemplate;
+        assert!(t.generate_patch("DATABASE_URL=${DATABASE_URL}", js()).is_none());
+    }
+
+    #[test]
+    fn test_react_href_wrapped() {
+        let t = ReactHrefJavascriptTemplate;
+        let result = t.generate_patch("    <a href={userInput}>click</a>", js()).unwrap();
+        assert!(result.contains("https?:"));
+        assert!(result.contains("'#'"));
+    }
+
+    #[test]
+    fn test_window_location_guard_injected() {
+        let t = ReactWindowLocationTemplate;
+        let result = t.generate_patch("    window.location.href = userInput;", js()).unwrap();
+        assert!(result.contains("Redirect blocked"));
+        assert!(result.contains("window.location.href"));
+    }
+
+    #[test]
+    fn test_localstorage_token_replaced() {
+        let t = ReactLocalStorageTokenTemplate;
+        let result = t.generate_patch("    localStorage.setItem('token', accessToken);", js()).unwrap();
+        assert!(result.contains("// SICARIO FIX (CWE-922)"));
+        assert!(result.contains("httpOnly cookies"));
+    }
+
+    #[test]
+    fn test_localstorage_non_auth_not_replaced() {
+        let t = ReactLocalStorageTokenTemplate;
+        assert!(t.generate_patch("    localStorage.setItem('theme', 'dark');", js()).is_none());
+    }
+
+    #[test]
+    fn test_useeffect_dep_injected() {
+        let t = ReactUseEffectMissingDepTemplate;
+        let result = t.generate_patch("    useEffect(() => { fetchData(userId); }, [])", js()).unwrap();
+        assert!(result.contains("[userId]"));
+        assert!(!result.contains(", []"));
+    }
+
+    #[test]
+    fn test_useeffect_no_dep_found() {
+        let t = ReactUseEffectMissingDepTemplate;
+        assert!(t.generate_patch("    useEffect(() => { doSomething(); }, [])", js()).is_none());
+    }
+
+    // ── Registry integration ──────────────────────────────────────────────────
+
+    #[test]
+    fn test_registry_django_debug_by_rule() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("django-debug-true", None).is_some());
+    }
+
+    #[test]
+    fn test_registry_csrf_exempt_by_cwe() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("unknown", Some("CWE-352")).is_some());
+    }
+
+    #[test]
+    fn test_registry_docker_latest_by_cwe() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("unknown", Some("CWE-1104")).is_some());
+    }
+
+    #[test]
+    fn test_registry_localstorage_by_cwe() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("unknown", Some("CWE-922")).is_some());
+    }
+
+    #[test]
+    fn test_registry_tls_go_by_rule() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("go-tls-insecure-skip-verify", None).is_some());
+    }
+
+    #[test]
+    fn test_registry_env_file_by_rule() {
+        let reg = TemplateRegistry::default();
+        assert!(reg.lookup("env-file-hardcoded-secret", None).is_some());
+    }
+}
