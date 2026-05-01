@@ -5,15 +5,14 @@
 #   curl -fsSL https://usesicario.xyz/install.sh | sh
 #
 # Environment variables (all optional):
-#   SICARIO_VERSION     — version to install, e.g. "v0.1.9"  (default: latest)
+#   SICARIO_VERSION     — version to install, e.g. "v0.2.1"  (default: latest)
 #   SICARIO_INSTALL_DIR — directory to place the binary       (default: auto)
 #
 # Supported platforms:
 #   macOS   — Apple Silicon (arm64) and Intel (x86_64)
-#   Linux   — x86_64 and aarch64/arm64
-#   Windows — x86_64 (via Git Bash / MSYS2 / Cygwin)
+#   Linux   — x86_64
 #
-# Requirements: curl or wget, tar/unzip, uname, chmod
+# Requirements: curl or wget, tar, uname, chmod
 
 GITHUB_REPO="sicario-labs/sicario-cli"
 
@@ -46,6 +45,14 @@ download() {
 }
 
 # ── Platform detection ─────────────────────────────────────────────────────────
+#
+# Release assets (v0.2.1+):
+#   sicario-linux-amd64.tar.gz    — Linux x86_64
+#   sicario-darwin-amd64.tar.gz   — macOS Intel
+#   sicario-darwin-arm64.tar.gz   — macOS Apple Silicon
+#
+# Each tarball contains a single file named sicario-<platform>
+# (e.g. sicario-linux-amd64) with no directory prefix.
 
 detect_platform() {
   local os arch
@@ -53,39 +60,38 @@ detect_platform() {
   os="$(uname -s)"
   arch="$(uname -m)"
 
-  BINARY_EXT=""
-  ARCHIVE_EXT=".tar.gz"
-
   case "$os" in
     Linux)
       case "$arch" in
-        x86_64 | amd64)      PLATFORM="linux-amd64" ;;
-        aarch64 | arm64)
-          # No pre-built ARM64 Linux binary yet — guide user to build from source
-          warn "No pre-built binary for Linux ARM64 yet."
-          warn "Build from source: cargo install sicario-cli"
-          warn "Or set SICARIO_VERSION and check https://github.com/$GITHUB_REPO/releases"
-          die "Unsupported Linux architecture: $arch (ARM64 Linux binary coming soon)"
+        x86_64 | amd64)
+          PLATFORM="linux-amd64"
           ;;
-        *)                   die "Unsupported Linux architecture: $arch. Please build from source: https://github.com/$GITHUB_REPO" ;;
+        aarch64 | arm64)
+          die "No pre-built binary for Linux ARM64 yet. Build from source: cargo install sicario-cli"
+          ;;
+        *)
+          die "Unsupported Linux architecture: $arch. Build from source: https://github.com/$GITHUB_REPO"
+          ;;
       esac
       ;;
     Darwin)
       case "$arch" in
-        x86_64)              PLATFORM="darwin-amd64" ;;
-        arm64 | aarch64)     PLATFORM="darwin-arm64" ;;
-        *)                   die "Unsupported macOS architecture: $arch" ;;
+        x86_64)          PLATFORM="darwin-amd64" ;;
+        arm64 | aarch64) PLATFORM="darwin-arm64" ;;
+        *)               die "Unsupported macOS architecture: $arch" ;;
       esac
       ;;
     MINGW* | MSYS* | CYGWIN* | Windows_NT)
-      PLATFORM="windows-amd64"
-      BINARY_EXT=".exe"
-      ARCHIVE_EXT=".zip"
+      die "Use the PowerShell installer on Windows: irm https://usesicario.xyz/install.ps1 | iex"
       ;;
     *)
       die "Unsupported OS: $os. Download a binary manually from https://github.com/$GITHUB_REPO/releases"
       ;;
   esac
+
+  ASSET_NAME="sicario-${PLATFORM}.tar.gz"
+  # The executable inside the tarball is named sicario-<platform> (no extension)
+  BINARY_IN_ARCHIVE="sicario-${PLATFORM}"
 }
 
 # ── Resolve the version to install ────────────────────────────────────────────
@@ -102,7 +108,10 @@ resolve_version() {
   local tmp
   tmp="$(mktemp)"
 
-  download "$api_url" "$tmp"
+  if ! download "$api_url" "$tmp"; then
+    rm -f "$tmp"
+    die "Could not reach GitHub API. Set SICARIO_VERSION explicitly and retry."
+  fi
 
   VERSION="$(grep -o '"tag_name": *"[^"]*"' "$tmp" | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
   rm -f "$tmp"
@@ -152,50 +161,45 @@ choose_install_dir() {
 # ── Download and install ───────────────────────────────────────────────────────
 
 install_binary() {
-  local asset_name="sicario-${PLATFORM}${ARCHIVE_EXT}"
-  local expected_bin_name="sicario-${PLATFORM}${BINARY_EXT}"
-  local download_url="https://github.com/$GITHUB_REPO/releases/download/${VERSION}/${asset_name}"
-  
+  local download_url="https://github.com/$GITHUB_REPO/releases/download/${VERSION}/${ASSET_NAME}"
   local tmp_dir
   tmp_dir="$(mktemp -d)"
-  local tmp_archive="${tmp_dir}/${asset_name}"
+  local tmp_archive="${tmp_dir}/${ASSET_NAME}"
 
-  say "Downloading $asset_name ..."
+  say "Downloading ${ASSET_NAME} ..."
   info "From: $download_url"
 
   if ! download "$download_url" "$tmp_archive"; then
     rm -rf "$tmp_dir"
-    die "Download failed. Check your internet connection or try setting SICARIO_VERSION to a known release tag."
+    die "Download failed. Check your internet connection or verify the release exists at https://github.com/$GITHUB_REPO/releases/tag/${VERSION}"
   fi
 
   if [ ! -s "$tmp_archive" ]; then
     rm -rf "$tmp_dir"
-    die "Downloaded file is empty. The release asset may not exist."
+    die "Downloaded file is empty. The release asset may not exist for this platform/version."
   fi
 
   say "Extracting archive..."
-  if [ "$ARCHIVE_EXT" = ".tar.gz" ]; then
-    tar -xzf "$tmp_archive" -C "$tmp_dir"
-  elif [ "$ARCHIVE_EXT" = ".zip" ]; then
-    unzip -q "$tmp_archive" -d "$tmp_dir"
+  if ! tar -xzf "$tmp_archive" -C "$tmp_dir"; then
+    rm -rf "$tmp_dir"
+    die "Failed to extract archive. The file may be corrupted."
   fi
 
-  # Look for the exact file name (e.g. sicario-linux-amd64) or fallback to anything starting with sicario
-  local extracted_bin="${tmp_dir}/${expected_bin_name}"
-  
+  # The tarball contains a single file: sicario-<platform>
+  # Try the expected name first, then fall back to any sicario* file.
+  local extracted_bin="${tmp_dir}/${BINARY_IN_ARCHIVE}"
+
   if [ ! -f "$extracted_bin" ]; then
-    extracted_bin=$(find "$tmp_dir" -type f -name "$expected_bin_name" | head -n 1)
+    # Fallback: find any file starting with "sicario" that is executable or a regular file
+    extracted_bin="$(find "$tmp_dir" -maxdepth 2 -type f -name 'sicario*' ! -name '*.tar.gz' ! -name '*.sha256' | head -n 1)"
   fi
 
   if [ -z "$extracted_bin" ] || [ ! -f "$extracted_bin" ]; then
-    extracted_bin=$(find "$tmp_dir" -type f -name "sicario*" | head -n 1)
-    if [ -z "$extracted_bin" ]; then
-      rm -rf "$tmp_dir"
-      die "Could not find sicario executable inside the extracted archive."
-    fi
+    rm -rf "$tmp_dir"
+    die "Could not find the sicario executable inside the extracted archive. Contents: $(ls "$tmp_dir")"
   fi
 
-  local dest="${INSTALL_DIR}/sicario${BINARY_EXT}"
+  local dest="${INSTALL_DIR}/sicario"
 
   say "Installing to $dest ..."
 
@@ -203,12 +207,10 @@ install_binary() {
     sudo mv "$extracted_bin" "$dest"
     sudo chmod +x "$dest"
   else
-    if ! mv "$extracted_bin" "$dest" 2>/dev/null; then
-      cp "$extracted_bin" "$dest"
-    fi
+    mv "$extracted_bin" "$dest" 2>/dev/null || cp "$extracted_bin" "$dest"
     chmod +x "$dest"
   fi
-  
+
   rm -rf "$tmp_dir"
 }
 
@@ -216,9 +218,7 @@ install_binary() {
 
 check_and_guide_path() {
   case ":${PATH}:" in
-    *":${INSTALL_DIR}:"*)
-      return
-      ;;
+    *":${INSTALL_DIR}:"*) return ;;
   esac
 
   printf "\n"
@@ -246,40 +246,36 @@ check_and_guide_path() {
       printf "  ${CYAN}fish_add_path %s${RESET}\n" "$INSTALL_DIR"
       ;;
     *)
-      printf "  Add the following line to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n"
+      printf "  Add to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n"
       printf "  ${CYAN}export PATH=\"%s:\$PATH\"${RESET}\n" "$INSTALL_DIR"
       ;;
   esac
 
-  printf "\n"
-  printf "  Or run Sicario directly without modifying PATH:\n"
-  printf "  ${CYAN}%s/sicario%s --version${RESET}\n" "$INSTALL_DIR" "${BINARY_EXT}"
   printf "\n"
 }
 
 # ── Verify installation ────────────────────────────────────────────────────────
 
 verify_install() {
-  local dest="${INSTALL_DIR}/sicario${BINARY_EXT}"
+  local dest="${INSTALL_DIR}/sicario"
 
   if [ ! -x "$dest" ]; then
     warn "Binary not found at $dest — PATH may need updating before first use."
     return
   fi
 
-  say "Verifying installation..."
   local installed_version
   installed_version="$("$dest" --version 2>/dev/null || echo "unknown")"
 
   printf "\n"
   printf "  ${GREEN}✓${RESET} ${BOLD}Sicario CLI installed successfully!${RESET}\n"
-  printf "  ${GREEN}✓${RESET} Version: %s\n" "$installed_version"
+  printf "  ${GREEN}✓${RESET} Version:  %s\n" "$installed_version"
   printf "  ${GREEN}✓${RESET} Location: %s\n" "$dest"
   printf "\n"
   printf "  ${BOLD}Quick start:${RESET}\n"
   printf "    sicario scan .                  # scan current directory\n"
   printf "    sicario scan . --publish        # scan and publish to dashboard\n"
-  printf "    sicario fix <file> --rule <id>  # Deterministic AST fix\n"
+  printf "    sicario fix <file> --rule <id>  # apply a deterministic fix\n"
   printf "\n"
   printf "  Docs: ${CYAN}https://usesicario.xyz/docs${RESET}\n"
   printf "\n"
