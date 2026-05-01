@@ -241,6 +241,35 @@ pub fn load_rules_from_dir(
     }
 }
 
+// ─── Embedded rule loader ─────────────────────────────────────────────────────
+
+/// Load all rules embedded in the binary at compile time into `eng`.
+///
+/// This is the primary rule-loading path for installed binaries — the entire
+/// `rules/` directory is compiled in via `rust-embed` so the full rule set is
+/// always available regardless of the filesystem layout on the user's machine.
+///
+/// Returns the number of rule files successfully parsed.
+fn load_embedded_rules_into(eng: &mut engine::sast_engine::SastEngine) -> usize {
+    use sicario_cli::embedded_rules::iter_embedded_rules;
+
+    let mut files_loaded = 0usize;
+    for (path, yaml_content) in iter_embedded_rules() {
+        match serde_yaml::from_str::<Vec<engine::security_rule::SecurityRule>>(&yaml_content) {
+            Ok(rules) => {
+                for rule in rules {
+                    let _ = eng.load_rule_direct(rule);
+                }
+                files_loaded += 1;
+            }
+            Err(e) => {
+                tracing::warn!("Skipping embedded rule file '{}': {}", path, e);
+            }
+        }
+    }
+    files_loaded
+}
+
 // ─── Scan command ─────────────────────────────────────────────────────────────
 
 fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
@@ -271,9 +300,23 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 
     let mut eng = SastEngine::new(&dir)?;
     let mut rules_loaded = 0usize;
-    for f in &rule_files {
-        if eng.load_rules(f).is_ok() {
-            rules_loaded += 1;
+
+    if rule_files.is_empty() {
+        // No explicit --rules flag and no rules/ directory found on disk.
+        // Load the full rule set embedded in the binary at compile time.
+        // This is the normal production path for installed binaries.
+        rules_loaded = load_embedded_rules_into(&mut eng);
+        tracing::debug!(
+            "Loaded {} embedded rule files ({} rules)",
+            rules_loaded,
+            eng.get_rules().len()
+        );
+    } else {
+        // Explicit --rules flag or rules/ directory found on disk (dev/CI path).
+        for f in &rule_files {
+            if eng.load_rules(f).is_ok() {
+                rules_loaded += 1;
+            }
         }
     }
 

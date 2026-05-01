@@ -197,6 +197,15 @@ impl SastEngine {
         Ok(())
     }
 
+    /// Load a single pre-parsed `SecurityRule` directly into the engine.
+    ///
+    /// Used by the embedded rule loader in `main.rs` to avoid re-parsing YAML
+    /// that has already been deserialized. Follows the same dedup/override
+    /// semantics as `validate_and_compile_rule`.
+    pub fn load_rule_direct(&mut self, rule: SecurityRule) -> Result<()> {
+        self.validate_and_compile_rule(rule)
+    }
+
     /// Validate rule syntax and compile tree-sitter query patterns
     fn validate_and_compile_rule(&mut self, rule: SecurityRule) -> Result<()> {
         // Validate rule has required fields

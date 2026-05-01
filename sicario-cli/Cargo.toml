@@ -113,6 +113,10 @@ ctrlc.workspace = true
 # Temp files (rule test harness)
 tempfile.workspace = true
 
+# Embedded rule assets — bundles the entire rules/ directory into the binary
+# at compile time so the full rule set is always available without a filesystem.
+rust-embed = { version = "8", features = ["include-exclude"] }
+
 [dev-dependencies]
 proptest.workspace = true
 tempfile.workspace = true

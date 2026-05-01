@@ -60,7 +60,13 @@ detect_platform() {
     Linux)
       case "$arch" in
         x86_64 | amd64)      PLATFORM="linux-amd64" ;;
-        aarch64 | arm64)     PLATFORM="linux-arm64" ;;
+        aarch64 | arm64)
+          # No pre-built ARM64 Linux binary yet — guide user to build from source
+          warn "No pre-built binary for Linux ARM64 yet."
+          warn "Build from source: cargo install sicario-cli"
+          warn "Or set SICARIO_VERSION and check https://github.com/$GITHUB_REPO/releases"
+          die "Unsupported Linux architecture: $arch (ARM64 Linux binary coming soon)"
+          ;;
         *)                   die "Unsupported Linux architecture: $arch. Please build from source: https://github.com/$GITHUB_REPO" ;;
       esac
       ;;

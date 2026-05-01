@@ -31,6 +31,7 @@ pub mod cache;
 pub mod cli;
 pub mod confidence;
 pub mod diff;
+pub mod embedded_rules;
 pub mod hook;
 pub mod key_manager;
 pub mod lsp;
