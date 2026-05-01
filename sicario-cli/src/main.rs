@@ -613,8 +613,9 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
 
     let exit_code = ExitCode::from_findings(&summaries, severity_threshold, confidence_threshold);
 
-    // GitHub Actions annotation
-    if in_github_actions {
+    // GitHub Actions annotation — only emit for non-JSON formats so the
+    // annotation lines don't corrupt machine-readable output.
+    if in_github_actions && !matches!(args.format, OutputFormat::Json | OutputFormat::Sarif) {
         let above_threshold = summaries
             .iter()
             .filter(|f| !f.suppressed && f.severity >= severity_threshold)
