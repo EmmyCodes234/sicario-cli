@@ -13,7 +13,7 @@
 #   Linux   — x86_64 and aarch64/arm64
 #   Windows — x86_64 (via Git Bash / MSYS2 / Cygwin)
 #
-# Requirements: curl or wget, uname, chmod
+# Requirements: curl or wget, tar/unzip, uname, chmod
 
 GITHUB_REPO="sicario-labs/sicario-cli"
 
@@ -55,26 +55,27 @@ detect_platform() {
   arch="$(uname -m)"
 
   BINARY_EXT=""
+  ARCHIVE_EXT=".tar.gz"
 
   case "$os" in
     Linux)
       case "$arch" in
-        x86_64 | amd64)      PLATFORM="x86_64-unknown-linux-gnu" ;;
-        aarch64 | arm64)     PLATFORM="aarch64-unknown-linux-gnu" ;;
-        armv7l | armv7)      PLATFORM="armv7-unknown-linux-gnueabihf" ;;
+        x86_64 | amd64)      PLATFORM="linux-amd64" ;;
+        aarch64 | arm64)     PLATFORM="linux-arm64" ;;
         *)                   die "Unsupported Linux architecture: $arch. Please build from source: https://github.com/$GITHUB_REPO" ;;
       esac
       ;;
     Darwin)
       case "$arch" in
-        x86_64)              PLATFORM="x86_64-apple-darwin" ;;
-        arm64 | aarch64)     PLATFORM="aarch64-apple-darwin" ;;
+        x86_64)              PLATFORM="darwin-amd64" ;;
+        arm64 | aarch64)     PLATFORM="darwin-arm64" ;;
         *)                   die "Unsupported macOS architecture: $arch" ;;
       esac
       ;;
     MINGW* | MSYS* | CYGWIN* | Windows_NT)
-      PLATFORM="x86_64-pc-windows-msvc"
+      PLATFORM="windows-amd64"
       BINARY_EXT=".exe"
+      ARCHIVE_EXT=".zip"
       ;;
     *)
       die "Unsupported OS: $os. Download a binary manually from https://github.com/$GITHUB_REPO/releases"
@@ -110,11 +111,6 @@ resolve_version() {
 
 # ── Choose install directory ───────────────────────────────────────────────────
 
-# Priority:
-#   1. SICARIO_INSTALL_DIR env var (explicit user override)
-#   2. /usr/local/bin if writable (system-wide, no sudo needed)
-#   3. ~/.local/bin   (user-local, always writable, no sudo needed)
-#   4. /usr/local/bin via sudo (system-wide, requires sudo)
 choose_install_dir() {
   if [ -n "${SICARIO_INSTALL_DIR:-}" ]; then
     INSTALL_DIR="$SICARIO_INSTALL_DIR"
@@ -122,14 +118,12 @@ choose_install_dir() {
     return
   fi
 
-  # Try /usr/local/bin without sudo first
   if [ -d "/usr/local/bin" ] && [ -w "/usr/local/bin" ]; then
     INSTALL_DIR="/usr/local/bin"
     USED_SUDO=false
     return
   fi
 
-  # Fall back to ~/.local/bin (always writable, no sudo)
   local user_bin="$HOME/.local/bin"
   if [ ! -d "$user_bin" ]; then
     mkdir -p "$user_bin" 2>/dev/null || true
@@ -140,7 +134,6 @@ choose_install_dir() {
     return
   fi
 
-  # Last resort: /usr/local/bin via sudo
   if command -v sudo > /dev/null 2>&1; then
     INSTALL_DIR="/usr/local/bin"
     USED_SUDO=true
@@ -148,46 +141,64 @@ choose_install_dir() {
     return
   fi
 
-  die "Cannot find a writable install directory. Set SICARIO_INSTALL_DIR to a writable path and retry.\n  Example: SICARIO_INSTALL_DIR=\$HOME/.local/bin sh install.sh"
+  die "Cannot find a writable install directory. Set SICARIO_INSTALL_DIR to a writable path and retry."
 }
 
 # ── Download and install ───────────────────────────────────────────────────────
 
 install_binary() {
-  local asset_name="sicario-${PLATFORM}${BINARY_EXT}"
+  local asset_name="sicario-${PLATFORM}${ARCHIVE_EXT}"
   local download_url="https://github.com/$GITHUB_REPO/releases/download/${VERSION}/${asset_name}"
-  local tmp_bin
-  tmp_bin="$(mktemp)"
+  
+  local tmp_dir
+  tmp_dir="$(mktemp -d)"
+  local tmp_archive="${tmp_dir}/${asset_name}"
 
   say "Downloading $asset_name ..."
   info "From: $download_url"
 
-  if ! download "$download_url" "$tmp_bin"; then
-    rm -f "$tmp_bin"
+  if ! download "$download_url" "$tmp_archive"; then
+    rm -rf "$tmp_dir"
     die "Download failed. Check your internet connection or try setting SICARIO_VERSION to a known release tag."
   fi
 
-  # Verify the downloaded file is non-empty
-  if [ ! -s "$tmp_bin" ]; then
-    rm -f "$tmp_bin"
-    die "Downloaded file is empty. The release asset may not exist for platform: $PLATFORM"
+  if [ ! -s "$tmp_archive" ]; then
+    rm -rf "$tmp_dir"
+    die "Downloaded file is empty. The release asset may not exist."
   fi
 
+  say "Extracting archive..."
+  if [ "$ARCHIVE_EXT" = ".tar.gz" ]; then
+    tar -xzf "$tmp_archive" -C "$tmp_dir"
+  elif [ "$ARCHIVE_EXT" = ".zip" ]; then
+    unzip -q "$tmp_archive" -d "$tmp_dir"
+  fi
+
+  local extracted_bin="${tmp_dir}/sicario${BINARY_EXT}"
   local dest="${INSTALL_DIR}/sicario${BINARY_EXT}"
+
+  # Fallback to search inside the dir if not at root
+  if [ ! -f "$extracted_bin" ]; then
+    extracted_bin=$(find "$tmp_dir" -type f -name "sicario${BINARY_EXT}" | head -n 1)
+    if [ -z "$extracted_bin" ]; then
+      rm -rf "$tmp_dir"
+      die "Could not find sicario executable inside the extracted archive."
+    fi
+  fi
 
   say "Installing to $dest ..."
 
   if [ "${USED_SUDO:-false}" = "true" ]; then
-    sudo mv "$tmp_bin" "$dest"
+    sudo mv "$extracted_bin" "$dest"
     sudo chmod +x "$dest"
   else
-    # Try direct move; if it fails (e.g. cross-device), copy then delete
-    if ! mv "$tmp_bin" "$dest" 2>/dev/null; then
-      cp "$tmp_bin" "$dest"
-      rm -f "$tmp_bin"
+    if ! mv "$extracted_bin" "$dest" 2>/dev/null; then
+      cp "$extracted_bin" "$dest"
     fi
     chmod +x "$dest"
   fi
+  
+  rm -rf "$tmp_dir"
 }
 
 # ── PATH guidance ──────────────────────────────────────────────────────────────
@@ -195,18 +206,15 @@ install_binary() {
 check_and_guide_path() {
   case ":${PATH}:" in
     *":${INSTALL_DIR}:"*)
-      # Already in PATH — nothing to do
       return
       ;;
   esac
 
-  # Not in PATH — print shell-specific instructions
   printf "\n"
   warn "$INSTALL_DIR is not in your PATH."
   printf "\n"
   printf "  ${BOLD}Add Sicario to your PATH:${RESET}\n\n"
 
-  # Detect the user's shell and suggest the right profile file
   local shell_name
   shell_name="$(basename "${SHELL:-sh}")"
 
@@ -215,7 +223,6 @@ check_and_guide_path() {
       printf "  ${CYAN}echo 'export PATH=\"%s:\$PATH\"' >> ~/.zshrc && source ~/.zshrc${RESET}\n" "$INSTALL_DIR"
       ;;
     bash)
-      # macOS bash uses ~/.bash_profile; Linux bash uses ~/.bashrc
       local profile_file
       if [ "$(uname -s)" = "Darwin" ]; then
         profile_file="~/.bash_profile"
@@ -228,7 +235,6 @@ check_and_guide_path() {
       printf "  ${CYAN}fish_add_path %s${RESET}\n" "$INSTALL_DIR"
       ;;
     *)
-      # Generic fallback
       printf "  Add the following line to your shell profile (~/.bashrc, ~/.zshrc, etc.):\n"
       printf "  ${CYAN}export PATH=\"%s:\$PATH\"${RESET}\n" "$INSTALL_DIR"
       ;;
@@ -260,9 +266,9 @@ verify_install() {
   printf "  ${GREEN}✓${RESET} Location: %s\n" "$dest"
   printf "\n"
   printf "  ${BOLD}Quick start:${RESET}\n"
-  printf "    sicario scan .              # scan current directory\n"
-  printf "    sicario scan . --publish    # scan and publish to dashboard\n"
-  printf "    sicario fix <file> --rule <id>  # AI-powered fix\n"
+  printf "    sicario scan .                  # scan current directory\n"
+  printf "    sicario scan . --publish        # scan and publish to dashboard\n"
+  printf "    sicario fix <file> --rule <id>  # Deterministic AST fix\n"
   printf "\n"
   printf "  Docs: ${CYAN}https://usesicario.xyz/docs${RESET}\n"
   printf "\n"
