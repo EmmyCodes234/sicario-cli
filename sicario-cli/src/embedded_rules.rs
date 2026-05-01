@@ -6,9 +6,11 @@
 //! `rust-embed` at the correct path relative to the crate root.
 //!
 //! Usage:
-//! ```rust
-//! use crate::embedded_rules::load_embedded_rules;
-//! engine.load_embedded_rules()?;
+//! ```no_run
+//! use sicario_cli::embedded_rules::iter_embedded_rules;
+//! for (path, content) in iter_embedded_rules() {
+//!     println!("{}: {} bytes", path, content.len());
+//! }
 //! ```
 
 use rust_embed::RustEmbed;
