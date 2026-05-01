@@ -1,0 +1,82 @@
+# React / JSX security rules
+# CWE-79: Cross-Site Scripting (XSS)
+# CWE-601: Open Redirect
+# CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code
+
+- id: "js/react-dangerouslysetinnerhtml"
+  name: "dangerouslySetInnerHTML with Unsanitized Input"
+  description: "Passing unsanitized user input to dangerouslySetInnerHTML enables stored or reflected XSS. Always sanitize with DOMPurify or equivalent before rendering."
+  severity: High
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(jsx_attribute (jsx_attribute_name) @attr (#eq? @attr \"dangerouslySetInnerHTML\")) @xss"
+    captures:
+      - "xss"
+  cwe_id: "CWE-79"
+  owasp_category: A03_Injection
+  help_uri: "https://react.dev/reference/react-dom/components/common#dangerously-setting-the-inner-html"
+  test_cases:
+    - code: '<div dangerouslySetInnerHTML={{ __html: userInput }} />'
+      expected: TruePositive
+    - code: '<div dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(userInput) }} />'
+      expected: TrueNegative
+
+- id: "js/react-href-javascript"
+  name: "javascript: URI in href Attribute"
+  description: "Using a javascript: URI in an href attribute allows XSS when the link is clicked. Validate that href values start with http:// or https://."
+  severity: High
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(jsx_attribute (jsx_attribute_name) @attr (#eq? @attr \"href\") (jsx_expression (identifier) @val)) @href"
+    captures:
+      - "href"
+  cwe_id: "CWE-79"
+  owasp_category: A03_Injection
+  help_uri: "https://owasp.org/www-community/attacks/xss/"
+  test_cases:
+    - code: '<a href={userUrl}>click</a>'
+      expected: TruePositive
+
+- id: "js/react-window-location-user-input"
+  name: "window.location Redirect with User Input"
+  description: "Setting window.location.href to a user-controlled value enables open redirect attacks. Validate the URL against an allowlist before redirecting."
+  severity: Medium
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(assignment_expression left: (member_expression object: (member_expression object: (identifier) @win (#eq? @win \"window\") property: (property_identifier) @loc (#eq? @loc \"location\")) property: (property_identifier) @prop (#eq? @prop \"href\"))) @redirect"
+    captures:
+      - "redirect"
+  cwe_id: "CWE-601"
+  owasp_category: A01_BrokenAccessControl
+  help_uri: "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+  test_cases:
+    - code: 'window.location.href = userInput;'
+      expected: TruePositive
+    - code: 'window.location.href = "/dashboard";'
+      expected: TrueNegative
+
+- id: "js/react-localstorage-sensitive"
+  name: "Sensitive Data Stored in localStorage"
+  description: "Storing authentication tokens or sensitive data in localStorage exposes it to XSS attacks. Use httpOnly cookies or sessionStorage with appropriate scope instead."
+  severity: Medium
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(call_expression function: (member_expression object: (identifier) @obj (#eq? @obj \"localStorage\") property: (property_identifier) @method (#eq? @method \"setItem\")) arguments: (arguments (string) @key (#match? @key \"(?i)(token|auth|session|jwt|secret|password|credential)\"))) @storage"
+    captures:
+      - "storage"
+  cwe_id: "CWE-922"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://cheatsheetseries.owasp.org/cheatsheets/HTML5_Security_Cheat_Sheet.html#local-storage"
+  test_cases:
+    - code: 'localStorage.setItem("auth_token", token);'
+      expected: TruePositive
+    - code: 'localStorage.setItem("theme", "dark");'
+      expected: TrueNegative

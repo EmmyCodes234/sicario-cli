@@ -106,7 +106,12 @@ If you have not yet signed the CLA, please review [CLA.md](CLA.md) and indicate 
 
 ## Contributing Rules
 
-To contribute detection rules to the community rule library, see the `sicario-rules` repository (Apache 2.0). That repository accepts YAML rule files and test fixtures — no Rust source code required.
+To contribute detection rules to the community rule library, see the [`sicario-rules`](https://github.com/sicario-labs/sicario-rules) repository (Apache 2.0). That repository accepts YAML rule files and test fixtures — no Rust source code required.
+
+```bash
+git clone https://github.com/sicario-labs/sicario-rules.git
+sicario scan . --rules-dir sicario-rules/rules/
+```
 
 ## License
 

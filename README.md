@@ -299,6 +299,13 @@ owasp_category: "A02_CryptographicFailures"
 
 Built-in rules cover SQL injection, XSS, command injection, path traversal, SSRF, deserialization, cryptographic failures, hardcoded secrets, and more — across all five supported languages.
 
+Community rules are available at [github.com/sicario-labs/sicario-rules](https://github.com/sicario-labs/sicario-rules) (Apache 2.0). Load them alongside built-ins:
+
+```bash
+git clone https://github.com/sicario-labs/sicario-rules.git
+sicario scan . --rules-dir sicario-rules/rules/
+```
+
 ---
 
 ## Development

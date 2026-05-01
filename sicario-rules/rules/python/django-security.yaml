@@ -1,0 +1,88 @@
+# Django security rules
+# CWE-215: Information Exposure Through Debug Information
+# CWE-352: Cross-Site Request Forgery
+# CWE-183: Permissive List of Allowed Inputs
+
+- id: "py/django-debug-true"
+  name: "Django DEBUG=True in Production"
+  description: "Running Django with DEBUG=True exposes stack traces, local variables, and settings to anyone who triggers an error. Always set DEBUG=False in production."
+  severity: High
+  languages:
+    - Python
+  pattern:
+    query: "(assignment left: (identifier) @name (#eq? @name \"DEBUG\") right: (true)) @assign"
+    captures:
+      - "assign"
+  cwe_id: "CWE-215"
+  owasp_category: A05_SecurityMisconfiguration
+  help_uri: "https://docs.djangoproject.com/en/stable/ref/settings/#debug"
+  test_cases:
+    - code: 'DEBUG = True'
+      expected: TruePositive
+    - code: 'DEBUG = False'
+      expected: TrueNegative
+    - code: 'DEBUG = os.environ.get("DEBUG", "False") == "True"'
+      expected: TrueNegative
+
+- id: "py/django-csrf-exempt"
+  name: "Django View Exempt from CSRF Protection"
+  description: "The @csrf_exempt decorator disables CSRF protection for a view, making it vulnerable to cross-site request forgery attacks. Remove the decorator or implement an alternative CSRF mechanism."
+  severity: High
+  languages:
+    - Python
+  pattern:
+    query: "(decorated_definition decorator: (decorator (identifier) @dec (#eq? @dec \"csrf_exempt\"))) @view"
+    captures:
+      - "view"
+  cwe_id: "CWE-352"
+  owasp_category: A01_BrokenAccessControl
+  help_uri: "https://docs.djangoproject.com/en/stable/ref/csrf/"
+  test_cases:
+    - code: |
+        @csrf_exempt
+        def my_view(request):
+            pass
+      expected: TruePositive
+    - code: |
+        @login_required
+        def my_view(request):
+            pass
+      expected: TrueNegative
+
+- id: "py/django-allowed-hosts-wildcard"
+  name: "Django ALLOWED_HOSTS Contains Wildcard"
+  description: "Setting ALLOWED_HOSTS = ['*'] allows requests from any host, enabling host header injection attacks. Specify exact hostnames in production."
+  severity: Medium
+  languages:
+    - Python
+  pattern:
+    query: "(assignment left: (identifier) @name (#eq? @name \"ALLOWED_HOSTS\") right: (list (string) @val (#match? @val \"\\\\*\"))) @assign"
+    captures:
+      - "assign"
+  cwe_id: "CWE-183"
+  owasp_category: A05_SecurityMisconfiguration
+  help_uri: "https://docs.djangoproject.com/en/stable/ref/settings/#allowed-hosts"
+  test_cases:
+    - code: 'ALLOWED_HOSTS = ["*"]'
+      expected: TruePositive
+    - code: 'ALLOWED_HOSTS = ["example.com", "www.example.com"]'
+      expected: TrueNegative
+
+- id: "py/django-secret-key-hardcoded"
+  name: "Django SECRET_KEY Hardcoded"
+  description: "Hardcoding the Django SECRET_KEY exposes it to anyone with repository access. Generate a unique key and store it in an environment variable."
+  severity: Critical
+  languages:
+    - Python
+  pattern:
+    query: "(assignment left: (identifier) @name (#eq? @name \"SECRET_KEY\") right: (string) @val) @assign"
+    captures:
+      - "assign"
+  cwe_id: "CWE-798"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://docs.djangoproject.com/en/stable/ref/settings/#secret-key"
+  test_cases:
+    - code: 'SECRET_KEY = "django-insecure-abc123xyz"'
+      expected: TruePositive
+    - code: 'SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]'
+      expected: TrueNegative

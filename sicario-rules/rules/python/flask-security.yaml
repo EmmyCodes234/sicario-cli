@@ -1,0 +1,63 @@
+# Flask security rules
+# CWE-215: Information Exposure Through Debug Information
+# CWE-798: Use of Hard-coded Credentials
+# CWE-94: Server-Side Template Injection
+
+- id: "py/flask-debug-true"
+  name: "Flask Running in Debug Mode"
+  description: "Running Flask with debug=True enables the Werkzeug debugger, which allows arbitrary code execution via the browser. Never run with debug=True in production."
+  severity: Critical
+  languages:
+    - Python
+  pattern:
+    query: "(call_expression function: (attribute object: (identifier) @app property: (identifier) @method (#eq? @method \"run\")) arguments: (argument_list (keyword_argument name: (identifier) @key (#eq? @key \"debug\") value: (true)))) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-215"
+  owasp_category: A05_SecurityMisconfiguration
+  help_uri: "https://flask.palletsprojects.com/en/stable/config/#DEBUG"
+  test_cases:
+    - code: 'app.run(debug=True)'
+      expected: TruePositive
+    - code: 'app.run(debug=False)'
+      expected: TrueNegative
+    - code: 'app.run(debug=os.environ.get("FLASK_DEBUG", "0") == "1")'
+      expected: TrueNegative
+
+- id: "py/flask-secret-key-hardcoded"
+  name: "Flask SECRET_KEY Hardcoded"
+  description: "Hardcoding the Flask secret key exposes session signing material to anyone with repository access. Store it in an environment variable."
+  severity: Critical
+  languages:
+    - Python
+  pattern:
+    query: "(assignment left: (attribute object: (identifier) @app property: (identifier) @prop (#eq? @prop \"secret_key\")) right: (string) @val) @assign"
+    captures:
+      - "assign"
+  cwe_id: "CWE-798"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://flask.palletsprojects.com/en/stable/config/#SECRET_KEY"
+  test_cases:
+    - code: 'app.secret_key = "super-secret"'
+      expected: TruePositive
+    - code: 'app.secret_key = os.environ["SECRET_KEY"]'
+      expected: TrueNegative
+
+- id: "py/flask-ssti"
+  name: "Server-Side Template Injection via render_template_string"
+  description: "Passing user-controlled input to render_template_string() enables SSTI, which can lead to remote code execution. Use render_template() with static template files instead."
+  severity: Critical
+  languages:
+    - Python
+  pattern:
+    query: "(call_expression function: (identifier) @fn (#eq? @fn \"render_template_string\") arguments: (argument_list (_) @arg)) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-94"
+  owasp_category: A03_Injection
+  help_uri: "https://owasp.org/www-project-web-security-testing-guide/v42/4-Web_Application_Security_Testing/07-Input_Validation_Testing/18-Testing_for_Server-Side_Template_Injection"
+  test_cases:
+    - code: 'return render_template_string(user_template)'
+      expected: TruePositive
+    - code: 'return render_template("index.html", name=name)'
+      expected: TrueNegative

@@ -1,0 +1,85 @@
+# Node.js authentication and session security rules
+# CWE-287: Improper Authentication
+# CWE-384: Session Fixation
+# CWE-613: Insufficient Session Expiration
+# CWE-347: Improper Verification of Cryptographic Signature
+
+- id: "js/jwt-verify-missing"
+  name: "JWT Decoded Without Verification"
+  description: "Using jwt.decode() instead of jwt.verify() skips signature verification, allowing attackers to forge tokens. Always use jwt.verify() with a secret or public key."
+  severity: Critical
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method \"decode\")) arguments: (arguments (_) @token)) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-347"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html"
+  test_cases:
+    - code: 'const payload = jwt.decode(token);'
+      expected: TruePositive
+    - code: 'const payload = jwt.verify(token, secret);'
+      expected: TrueNegative
+
+- id: "js/jwt-none-algorithm"
+  name: "JWT Accepts 'none' Algorithm"
+  description: "Accepting the 'none' algorithm in JWT verification allows attackers to forge tokens without a signature. Always specify allowed algorithms explicitly."
+  severity: Critical
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method \"verify\")) arguments: (arguments (_) (_) (object (pair key: (property_identifier) @key (#eq? @key \"algorithms\") value: (array (string) @alg (#match? @alg \"none\")))))) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-347"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://auth0.com/blog/critical-vulnerabilities-in-json-web-token-libraries/"
+  test_cases:
+    - code: 'jwt.verify(token, secret, { algorithms: ["none"] });'
+      expected: TruePositive
+    - code: 'jwt.verify(token, secret, { algorithms: ["HS256"] });'
+      expected: TrueNegative
+
+- id: "js/session-no-httponly"
+  name: "Session Cookie Missing HttpOnly Flag"
+  description: "Session cookies without the HttpOnly flag are accessible via JavaScript, enabling theft through XSS. Always set httpOnly: true on session cookies."
+  severity: Medium
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method \"session\")) arguments: (arguments (object) @opts (#not-match? @opts \"httpOnly\"))) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-1004"
+  owasp_category: A05_SecurityMisconfiguration
+  help_uri: "https://owasp.org/www-community/HttpOnly"
+  test_cases:
+    - code: 'app.use(session({ secret: "s3cr3t", cookie: { secure: true } }));'
+      expected: TruePositive
+    - code: 'app.use(session({ secret: "s3cr3t", cookie: { httpOnly: true, secure: true } }));'
+      expected: TrueNegative
+
+- id: "js/hardcoded-jwt-secret"
+  name: "Hardcoded JWT Secret"
+  description: "Hardcoding a JWT secret in source code exposes it to anyone with repository access. Store secrets in environment variables or a secrets manager."
+  severity: Critical
+  languages:
+    - JavaScript
+    - TypeScript
+  pattern:
+    query: "(call_expression function: (member_expression property: (property_identifier) @method (#eq? @method \"sign\")) arguments: (arguments (_) (string) @secret)) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-798"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://cheatsheetseries.owasp.org/cheatsheets/Secrets_Management_Cheat_Sheet.html"
+  test_cases:
+    - code: 'jwt.sign(payload, "my-super-secret");'
+      expected: TruePositive
+    - code: 'jwt.sign(payload, process.env.JWT_SECRET);'
+      expected: TrueNegative

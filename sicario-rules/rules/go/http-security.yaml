@@ -1,0 +1,42 @@
+# Go HTTP security rules
+# CWE-295: Improper Certificate Validation
+# CWE-601: Open Redirect
+# CWE-918: Server-Side Request Forgery
+
+- id: "go/tls-insecure-skip-verify"
+  name: "TLS Certificate Verification Disabled"
+  description: "Setting InsecureSkipVerify: true disables TLS certificate validation, making the connection vulnerable to man-in-the-middle attacks. Remove this flag in production code."
+  severity: Critical
+  languages:
+    - Go
+  pattern:
+    query: "(composite_literal type: (qualified_type package: (package_identifier) name: (type_identifier) @type (#eq? @type \"Config\")) body: (literal_value (keyed_element (literal_element (identifier) @key (#eq? @key \"InsecureSkipVerify\")) (literal_element (true))))) @tls"
+    captures:
+      - "tls"
+  cwe_id: "CWE-295"
+  owasp_category: A02_CryptographicFailures
+  help_uri: "https://pkg.go.dev/crypto/tls#Config"
+  test_cases:
+    - code: '&tls.Config{InsecureSkipVerify: true}'
+      expected: TruePositive
+    - code: '&tls.Config{MinVersion: tls.VersionTLS12}'
+      expected: TrueNegative
+
+- id: "go/http-redirect-user-input"
+  name: "HTTP Redirect with User-Controlled URL"
+  description: "Redirecting to a user-controlled URL enables open redirect attacks. Validate the redirect target against an allowlist of trusted domains."
+  severity: Medium
+  languages:
+    - Go
+  pattern:
+    query: "(call_expression function: (selector_expression field: (field_identifier) @fn (#eq? @fn \"Redirect\")) arguments: (argument_list (_) (_) (_) @url)) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-601"
+  owasp_category: A01_BrokenAccessControl
+  help_uri: "https://cheatsheetseries.owasp.org/cheatsheets/Unvalidated_Redirects_and_Forwards_Cheat_Sheet.html"
+  test_cases:
+    - code: 'http.Redirect(w, r, r.URL.Query().Get("next"), http.StatusFound)'
+      expected: TruePositive
+    - code: 'http.Redirect(w, r, "/dashboard", http.StatusFound)'
+      expected: TrueNegative
