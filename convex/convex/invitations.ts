@@ -5,9 +5,21 @@ import { requireRole, getUserMembership } from "./rbac";
 /**
  * Invite a member by email address.
  *
- * If the email matches an existing Convex Auth user, a membership is created
- * immediately. Otherwise a pendingInvitations record is stored so the invitee
- * is auto-added when they sign up.
+ * Always creates a pendingInvitation record. The invitation is redeemed
+ * automatically in two ways:
+ *
+ * 1. For users who sign up AFTER being invited: the `afterUserCreatedOrUpdated`
+ *    callback in auth.ts fires on registration and redeems all pending
+ *    invitations matching their email.
+ *
+ * 2. For users who ALREADY have an account: `ensureOrg` (called on every
+ *    dashboard load) checks for pending invitations and redeems them using
+ *    the correct tokenIdentifier-derived userId format.
+ *
+ * This approach avoids the userId format mismatch that occurred when
+ * `invitations.create` tried to create memberships directly using
+ * `matchedUser._id.toString()`, which differs from the
+ * `tokenIdentifier.split("|").pop()` format used everywhere else.
  */
 export const create = mutation({
   args: {
@@ -34,35 +46,9 @@ export const create = mutation({
       throw new Error("An invitation is already pending for this email");
     }
 
-    // Look up Auth users table by email (no email index — scan + filter)
-    const allUsers = await ctx.db.query("users").collect();
-    const matchedUser = allUsers.find(
-      (u) => (u as any).email?.toLowerCase() === normalizedEmail
-    );
-
-    if (matchedUser) {
-      const userId = matchedUser._id.toString();
-
-      // Check for duplicate membership
-      const existingMembership = await getUserMembership(ctx, userId, args.orgId);
-      if (existingMembership) {
-        throw new Error("User is already a member of this organization");
-      }
-
-      // Create membership immediately
-      const now = new Date().toISOString();
-      await ctx.db.insert("memberships", {
-        userId,
-        orgId: args.orgId,
-        role: args.role,
-        teamIds: args.teamIds ?? [],
-        createdAt: now,
-      });
-
-      return { status: "added" as const, email: normalizedEmail };
-    }
-
-    // No matching user — create pending invitation
+    // Always create a pending invitation.
+    // - New users: redeemed by afterUserCreatedOrUpdated in auth.ts on signup.
+    // - Existing users: redeemed by ensureOrg on their next dashboard load.
     const now = new Date().toISOString();
     await ctx.db.insert("pendingInvitations", {
       invitationId: crypto.randomUUID(),

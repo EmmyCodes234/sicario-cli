@@ -78,6 +78,7 @@ mod tests {
                     duration_ms: None,
                     rules_loaded: None,
                     files_scanned: None,
+                    contributor_count: 1,
                     findings,
                 },
             )

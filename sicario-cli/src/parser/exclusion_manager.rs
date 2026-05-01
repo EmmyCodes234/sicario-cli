@@ -38,6 +38,21 @@ impl ExclusionManager {
         Ok(manager)
     }
 
+    /// Create an ExclusionManager with only the built-in default excludes and
+    /// no patterns loaded from `.gitignore` or `.sicarioignore`.
+    ///
+    /// Used as a fallback when the watched directory cannot be read (e.g. the
+    /// path does not exist yet at startup).  The default excludes (node_modules,
+    /// target, dist, …) are still applied so the watcher never scans build
+    /// artefacts even in the fallback case.
+    pub fn empty() -> Self {
+        Self {
+            gitignore_patterns: GlobSet::empty(),
+            sicarioignore_patterns: GlobSet::empty(),
+            default_excludes: Self::build_default_excludes().unwrap_or_else(|_| GlobSet::empty()),
+        }
+    }
+
     /// Build default exclusion patterns
     fn build_default_excludes() -> Result<GlobSet> {
         let mut builder = GlobSetBuilder::new();
@@ -349,6 +364,57 @@ mod tests {
         assert!(manager.is_excluded(Path::new("node_modules/lib.js")));
         assert!(manager.is_excluded(Path::new("dist/bundle.js")));
         assert!(!manager.is_excluded(Path::new("src/main.rs")));
+
+        // Cleanup
+        fs::remove_dir_all(&temp_dir).ok();
+    }
+
+    /// Validates that the `empty()` fallback constructor still applies default
+    /// excludes (node_modules, target, dist, …) even when no ignore files are
+    /// present.  This is the path taken by `run_watch_mode` when the watched
+    /// directory cannot be read at startup.
+    #[test]
+    fn test_empty_constructor_applies_default_excludes() {
+        let manager = ExclusionManager::empty();
+
+        // Default excludes must still be active
+        assert!(manager.is_excluded(Path::new("node_modules/lib.js")));
+        assert!(manager.is_excluded(Path::new("dist/bundle.js")));
+        assert!(manager.is_excluded(Path::new("target/debug/app")));
+
+        // Regular source files must not be excluded
+        assert!(!manager.is_excluded(Path::new("src/main.rs")));
+        assert!(!manager.is_excluded(Path::new("src/app.js")));
+    }
+
+    /// Validates the watch-mode exclusion path (Req 18.6):
+    /// files matching `.gitignore` or `.sicarioignore` patterns must be
+    /// identified as excluded so the watcher can skip them silently.
+    #[test]
+    fn test_watch_mode_exclusion_check() {
+        let temp_dir = std::env::temp_dir().join("sicario_watch_excl_test");
+        fs::create_dir_all(&temp_dir).unwrap();
+
+        // Simulate a project with both ignore files
+        let gitignore_path = temp_dir.join(".gitignore");
+        fs::write(&gitignore_path, "*.generated.ts\nvendor/").unwrap();
+
+        let sicarioignore_path = temp_dir.join(".sicarioignore");
+        fs::write(&sicarioignore_path, "vuln-sandbox/\nlegacy/").unwrap();
+
+        let manager = ExclusionManager::new(&temp_dir).unwrap();
+
+        // Files matching .gitignore patterns must be excluded
+        assert!(manager.is_excluded(Path::new("src/api.generated.ts")));
+        assert!(manager.is_excluded(Path::new("vendor/lib/index.js")));
+
+        // Files matching .sicarioignore patterns must be excluded
+        assert!(manager.is_excluded(Path::new("vuln-sandbox/node/sql-injection.js")));
+        assert!(manager.is_excluded(Path::new("legacy/auth.py")));
+
+        // Regular source files must not be excluded
+        assert!(!manager.is_excluded(Path::new("src/auth.ts")));
+        assert!(!manager.is_excluded(Path::new("src/main.py")));
 
         // Cleanup
         fs::remove_dir_all(&temp_dir).ok();

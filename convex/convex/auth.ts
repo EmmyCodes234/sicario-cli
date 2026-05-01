@@ -23,19 +23,32 @@ export const { auth, signIn, signOut, store, isAuthenticated } = convexAuth({
 
       if (pendingInvitations.length === 0) return;
 
+      // Use the document ID string as userId — this matches the format used by
+      // tokenIdentifier.split("|").pop() in all other mutations (organizations.ts,
+      // memberships.ts, etc.), since the last segment of the tokenIdentifier IS
+      // the Convex Auth user document ID.
       const userIdStr = userId.toString();
       const now = new Date().toISOString();
 
       // Process each invitation independently so one failure doesn't block others
       for (const invitation of pendingInvitations) {
         try {
-          await ctx.db.insert("memberships", {
-            userId: userIdStr,
-            orgId: invitation.orgId,
-            role: invitation.role,
-            teamIds: invitation.teamIds,
-            createdAt: now,
-          });
+          // Check for duplicate membership before inserting
+          const alreadyMember = await (ctx.db
+            .query("memberships") as any)
+            .withIndex("by_userId", (q: any) => q.eq("userId", userIdStr))
+            .filter((q: any) => q.eq(q.field("orgId"), invitation.orgId))
+            .first();
+
+          if (!alreadyMember) {
+            await ctx.db.insert("memberships", {
+              userId: userIdStr,
+              orgId: invitation.orgId,
+              role: invitation.role,
+              teamIds: invitation.teamIds,
+              createdAt: now,
+            });
+          }
           await ctx.db.delete(invitation._id);
         } catch (error) {
           // Log the error but retain the pending invitation record

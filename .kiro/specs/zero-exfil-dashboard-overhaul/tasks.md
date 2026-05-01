@@ -1,0 +1,333 @@
+# Implementation Plan: Zero-Exfiltration Dashboard & Onboarding Overhaul
+
+## Overview
+
+Transform the Sicario web dashboard into a strictly read-only telemetry monitor. The implementation proceeds in three phases: surgical removal of GitHub App / auto-fix UI, zero-exfil onboarding overhaul, and command-center rebuild. All code is TypeScript/React (frontend) and TypeScript/Convex (backend).
+
+## Tasks
+
+- [x] 1. Surgical Removal — strip GitHub App UI, AutoFixPanel, PrChecksPanel, AiFixesCard, Scan Now buttons
+  - [x] 1.1 Remove `AutoFixPanel` and `PrChecksPanel` from `OverviewPage.tsx`
+    - Delete the `<AutoFixPanel />` and `<PrChecksPanel />` JSX nodes and their imports
+    - Remove the `<CoverageMap />` component if it references GitHub repos
+    - _Requirements: 1.1, 1.2, 1.7_
+  - [x] 1.2 Remove `AiFixesCard` and connected-repos banner from `OverviewPage.tsx`
+    - Delete `<AiFixesCard />` JSX node and its import
+    - Delete the "connected repositories" banner block
+    - _Requirements: 1.3, 1.8_
+  - [x] 1.3 Remove all "Scan Now", "Connect Repository", "Install GitHub App" buttons site-wide
+    - Search for and remove every button/link with those labels across all page components
+    - _Requirements: 1.4_
+  - [x] 1.4 Remove "Fix", "Create PR", "Commit" buttons from `FindingDetailPage.tsx`
+    - Delete those action buttons and any associated mutation calls
+    - _Requirements: 1.5_
+  - [x] 1.5 Remove `githubAppInstallationId` display from `ProjectDetailPage.tsx`
+    - Delete the field row and any GitHub App installation reference UI
+    - _Requirements: 1.6_
+
+- [x] 2. Shared Components — build TerminalBlock, SnippetBlock, DemoModeBanner, RemediationHandoff, ExecutionAuditTrail, ZeroExfilBadge, Beta tag
+  - [x] 2.1 Create `TerminalBlock` component at `sicario-frontend/src/components/ui/TerminalBlock.tsx`
+    - Implement macOS title bar (3 colored dots + title text in font-mono)
+    - Outer: `bg-[#0d0d0d] border border-border-subtle rounded-lg overflow-hidden`
+    - Add `role="region"` with `aria-label` prop
+    - _Requirements: 3.1, 14.8, 20.5_
+  - [x] 2.2 Create `SnippetBlock` component at `sicario-frontend/src/components/ui/SnippetBlock.tsx`
+    - Enforce 500-char max on `snippet` prop
+    - Render top/bottom gradient overlays only when snippet contains `\n` (use `data-testid="snippet-gradient"`)
+    - Render caption "Snippet only — full file never stored on this server"
+    - Add `overflow: hidden` on container
+    - _Requirements: 7.1, 7.2, 7.3, 19.1, 19.2, 19.4, 19.5_
+  - [x] 2.3 Create `DemoModeBanner` component at `sicario-frontend/src/components/dashboard/DemoModeBanner.tsx`
+    - `role="alert"` `aria-live="polite"`, text "Viewing Demo Data. Run 'sicario scan .' locally to see live vulnerabilities."
+    - Primary "Connect Your Code" button that opens the CLI commands modal
+    - _Requirements: 4.3, 20.3_
+  - [x] 2.4 Create `RemediationHandoff` component at `sicario-frontend/src/components/dashboard/RemediationHandoff.tsx`
+    - Wrap a `TerminalBlock` with command `sicario fix --id=<findingId>`
+    - Use existing `CopyButton` with `aria-label="Copy sicario fix command"`
+    - Add `data-testid="remediation-command"` on the command element
+    - _Requirements: 8.1, 8.2, 8.4, 8.5, 20.2_
+  - [x] 2.5 Create `ExecutionAuditTrail` component at `sicario-frontend/src/components/dashboard/ExecutionAuditTrail.tsx`
+    - `role="list"` container, each entry `role="listitem"` in font-mono text-xs
+    - Timestamp portion styled `text-accent`, rest `text-text-main`
+    - `max-h-48 overflow-y-auto` scrollable container
+    - Empty state: "No execution trace available for this finding."
+    - _Requirements: 9.1, 9.2, 9.3, 9.4, 9.5, 20.6_
+  - [x] 2.6 Create `ZeroExfilBadge` component at `sicario-frontend/src/components/dashboard/ZeroExfilBadge.tsx`
+    - Shield icon in `text-accent`, "Zero-Exfiltration" line + "Telemetry Mode" line
+    - `border border-accent/20 bg-accent/5 rounded-lg px-3 py-2`
+    - _Requirements: 29.2_
+  - [x] 2.7 Add Beta tag to `Sidebar.tsx` desktop and mobile logo headers
+    - Inline after the "sicario" text span: `<span className="text-[10px] font-bold uppercase tracking-widest px-1.5 py-0.5 rounded border border-accent/30 text-accent bg-accent/5">Beta</span>`
+    - Hide when `collapsed` is true (icon-only mode)
+    - Apply to both the desktop sidebar logo and the mobile slide-out logo
+    - _Requirements: 29.1_
+
+- [x] 3. Demo Mode Infrastructure — DemoModeContext, DEMO_PROJECT constant, demo data
+  - [x] 3.1 Create `DemoModeContext` at `sicario-frontend/src/contexts/DemoModeContext.tsx`
+    - Expose `demoMode: boolean`, `demoProject`, `enterDemoMode()`, `exitDemoMode()`
+    - State lives in React component state only (not persisted)
+    - _Requirements: 4.2, 4.6, 5.3_
+  - [x] 3.2 Create `DEMO_PROJECT` constant at `sicario-frontend/src/data/demoProject.ts`
+    - Type as `const DEMO_PROJECT: Project`, `const DEMO_FINDINGS: Finding[]`, `const DEMO_SCAN: Scan`
+    - Include ≥1 finding per severity (Critical, High, Medium, Low)
+    - Include ≥1 finding with `executionTrace.length >= 3` in `[HH:MM:SS] <emoji> <description>` format
+    - Include ≥1 finding with a truncated snippet (50–500 chars) demonstrating fade-out
+    - Include mock scan metadata (repo, branch, commitSha, duration, filesScanned, languageBreakdown)
+    - _Requirements: 18.1, 18.2, 18.3, 18.4, 18.5, 18.6_
+
+- [x] 4. Convex Backend — schema additions, purgeTelemetry, deleteProject, updateAlertingConfig mutations
+  - [x] 4.1 Add schema fields to `convex/convex/schema.ts`
+    - Add `slackWebhookUrl: v.optional(v.string())` to the `projects` table
+    - Add `slackAlertSeverityThreshold: v.optional(v.string())` to the `projects` table
+    - Add `by_projectId` index to `findings` table if not present
+    - Add `by_projectId` index to `scans` table if not present
+    - _Requirements: 17.1, 17.2, 15.3, 15.4_
+  - [x] 4.2 Implement `purgeTelemetry` mutation in `convex/convex/projects.ts`
+    - Accept `projectId`, `userId`, `orgId`; require "manager" role via `requireRole`
+    - Delete all findings and scans for the project using `by_projectId` index
+    - _Requirements: 15.1, 15.2, 15.3, 15.4, 15.5_
+  - [x] 4.3 Implement `deleteProject` mutation in `convex/convex/projects.ts`
+    - Accept `projectId`, `userId`, `orgId`; require "admin" role
+    - Reuse purge logic then delete the project record; idempotent (no-op if not found)
+    - _Requirements: 16.1, 16.2, 16.3, 16.4, 16.5, 16.6_
+  - [x] 4.4 Implement `updateAlertingConfig` mutation in `convex/convex/projects.ts`
+    - Accept `projectId`, `userId`, `orgId`, `slackWebhookUrl`, `slackAlertSeverityThreshold`; require "manager" role
+    - Patch the project record with the two new fields
+    - _Requirements: 17.3, 17.4, 17.5_
+  - [x] 4.5 Add `isValidSlackWebhookUrl` pure function to `sicario-frontend/src/lib/validation.ts`
+    - Returns `true` iff `url.startsWith('https://hooks.slack.com/')`
+    - _Requirements: 12.3_
+
+- [x] 5. Onboarding Overhaul — replace OnboardingV2Page with name-only creation + Terminal Handshake + Demo Mode bypass
+  - [x] 5.1 Remove `repositoryUrl` input field from step 1 of `OnboardingV2Page.tsx`
+    - Delete the `repositoryUrl` state, the `<input id="repo-url">` block, and the `repository_url` argument passed to `createProject`
+    - _Requirements: 2.1, 2.4_
+  - [x] 5.2 Add "Explore Dashboard (Demo Mode)" ghost button to step 2 of `OnboardingV2Page.tsx`
+    - Render below the terminal block; call `enterDemoMode()` from `DemoModeContext` on click
+    - _Requirements: 4.1, 4.2_
+  - [x] 5.3 Wire Terminal Handshake auto-navigation to `provisioningState === "active"` (already exists; verify and keep)
+    - Confirm the `useEffect` watching `project?.provisioning_state` navigates correctly
+    - _Requirements: 3.6, 5.2_
+  - [x] 5.4 Update waiting-room `aria-live` attribute on the "Waiting for edge telemetry…" indicator
+    - Add `aria-live="polite"` to the pulsing indicator span
+    - _Requirements: 20.4_
+
+- [x] 6. Dashboard Layout — DemoModeBanner integration, ZeroExfilBadge in sidebar, Beta tag
+  - [x] 6.1 Wrap `DashboardLayout` with `DemoModeContext` provider
+    - Import and render `<DemoModeContext.Provider>` around the layout tree
+    - _Requirements: 4.2, 4.4_
+  - [x] 6.2 Render `DemoModeBanner` at top of `<main>` when `demoMode === true`
+    - Conditionally render above all page content; ensure it appears on every dashboard route
+    - _Requirements: 4.3, 29.3_
+  - [x] 6.3 Add `ZeroExfilBadge` to the bottom of `Sidebar.tsx` (above the footer account link)
+    - Render only when `!collapsed`
+    - _Requirements: 29.2_
+  - [x] 6.4 Remove any "GitHub", "Repositories", "Auto-Fix", or "PR Checks" nav items from `Sidebar.tsx`
+    - Audit `navGroups` array and remove any such items
+    - _Requirements: 29.4_
+
+- [x] 7. Overview Page — remove panels, rename metrics, read-only layout
+  - [x] 7.1 Rename stat card labels in `OverviewPage.tsx`
+    - "Total Findings" → "Vulnerabilities Intercepted"
+    - "Total Scans" → "Edge Scans Executed"
+    - _Requirements: 6.1_
+  - [x] 7.2 Remove `RunFirstScanCard`, `cicdSnippets`, and role-based layout branching from `OverviewPage.tsx`
+    - Simplify to a single default layout: metrics → charts → mttr+projects
+    - _Requirements: 6.2, 6.5_
+  - [x] 7.3 Add empty state for no-findings case in `OverviewPage.tsx`
+    - When `overview?.total_findings === 0`, render empty state directing user to run `sicario scan . --publish` locally
+    - _Requirements: 6.5_
+
+- [ ] 8. Findings Page — filterable table, no bulk auto-fix
+  - [x] 8.1 Implement filter controls in `FindingsPage.tsx` (severity multi-select, triage state, project dropdown, text search)
+    - Sync active filters to URL query parameters
+    - _Requirements: 21.2, 21.3_
+  - [x] 8.2 Display total count of matching findings above the table
+    - _Requirements: 21.5_
+  - [x] 8.3 Add empty states: "No findings match your filters" with "Clear filters" link; and no-findings-at-all state
+    - _Requirements: 21.6, 21.7_
+  - [x] 8.4 Remove any bulk "Auto-Fix" or "Create PR" toolbar action from `FindingsPage.tsx`
+    - Keep bulk triage state update (Ignored / ToFix) as metadata-only operation
+    - _Requirements: 21.8, 21.9_
+
+- [ ] 9. Finding Detail Page — SnippetBlock, RemediationHandoff, ExecutionAuditTrail
+  - [x] 9.1 Replace plain `<pre>` snippet with `SnippetBlock` in `FindingDetailPage.tsx`
+    - Pass `snippet`, `filePath`, `line`, `endLine` props
+    - _Requirements: 7.1, 7.2, 7.3, 7.5_
+  - [x] 9.2 Replace "Auto-Fix Command" card with `RemediationHandoff` in `FindingDetailPage.tsx`
+    - Pass `findingId` prop; remove any "Fix", "Create PR", "Commit" buttons
+    - _Requirements: 8.1, 8.2, 8.3, 8.4_
+  - [x] 9.3 Add `ExecutionAuditTrail` section below `RemediationHandoff` in `FindingDetailPage.tsx`
+    - Pass `entries={finding.executionTrace ?? []}` prop
+    - _Requirements: 9.1, 9.2, 9.3, 9.4_
+  - [x] 9.4 Display full finding metadata: file path, line, severity, CWE ID, OWASP category, confidence score, fingerprint (truncated to 16 chars)
+    - _Requirements: 7.6_
+
+- [ ] 10. Projects Page — card grid, name-only creation modal
+  - [x] 10.1 Implement project card grid in `ProjectsPage.tsx` showing name, truncated ID with copy icon, last scan date, findings count, severity mini-bar, and `provisioningState` badge
+    - _Requirements: 22.1, 22.6_
+  - [x] 10.2 Wire "New Project" button to open the name-only creation modal (reuse step-1 form from onboarding)
+    - No GitHub OAuth, no repository URL field
+    - _Requirements: 22.3, 22.5_
+  - [x] 10.3 Add empty state "Create your first project" CTA when no projects exist
+    - _Requirements: 22.4_
+  - [x] 10.4 Add "Setup CLI" link for projects with `provisioningState: "pending"` that navigates to Terminal Handshake
+    - _Requirements: 22.7_
+
+- [ ] 11. Project Detail Page — scan history, CLI integration summary, provisioning state
+  - [x] 11.1 Overhaul `ProjectDetailPage.tsx` layout: project metadata, CLI Integration summary (masked API key + link to settings), findings severity breakdown bar, scan history table
+    - _Requirements: 23.1, 23.7_
+  - [x] 11.2 Remove all "Connect Repository", "Install GitHub App", "Sync", "Scan Now" buttons from `ProjectDetailPage.tsx`
+    - _Requirements: 23.2_
+  - [x] 11.3 Add "Settings" button linking to `ProjectSettingsView` (4-tab layout)
+    - _Requirements: 23.3_
+  - [x] 11.4 Show Terminal Handshake instructions inline when `provisioningState === "pending"`
+    - _Requirements: 23.4_
+  - [x] 11.5 Implement scan history table with columns: Scan ID (truncated), Branch, Commit SHA (truncated + copy), Duration, Files Scanned, Findings Count, Timestamp; clicking a row navigates to ScanDetailPage
+    - _Requirements: 23.5, 23.6_
+
+- [x] 12. Project Settings View — 4-tab layout (CLI Integration, Telemetry API Keys, Alerting, Danger Zone)
+  - [x] 12.1 Create `ProjectSettingsView` component at `sicario-frontend/src/components/dashboard/ProjectSettingsView.tsx` with 4-tab left sidebar using existing Tabs component
+    - _Requirements: 10.1_
+  - [x] 12.2 Implement "CLI Integration" tab: project name, raw `projectId` with copy icon, `TerminalBlock` with `sicario login` and `sicario link` commands, individual copy buttons
+    - No GitHub connection strings or OAuth buttons
+    - _Requirements: 10.2, 10.3, 10.4_
+  - [x] 12.3 Implement "Telemetry API Keys" tab: masked key table (name, masked value, created date, last-used), "Generate New Key" button, one-time full-reveal modal with warning, "Revoke" action with confirmation dialog
+    - _Requirements: 11.1, 11.2, 11.3, 11.4, 11.5, 11.6_
+  - [x] 12.4 Implement "Alerting & Notifications" tab: Slack webhook URL input, severity threshold dropdown, client-side `isValidSlackWebhookUrl` validation, inline error on invalid URL, "Test Webhook" button, save calls `updateAlertingConfig` mutation
+    - _Requirements: 12.1, 12.2, 12.3, 12.4, 12.5_
+  - [x] 12.5 Implement "Danger Zone" tab: red-bordered section, "Purge Telemetry Data" with confirmation dialog calling `purgeTelemetry`, "Delete Project" with exact-name text input guard calling `deleteProject` then navigating to `/dashboard/projects`
+    - Add `data-testid="delete-confirm-input"` and `data-testid="delete-confirm-button"` for testability
+    - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7_
+
+- [x] 13. Scans Page — scan history table, "Source: Edge CLI" badge
+  - [x] 13.1 Implement paginated scans table in `ScansPage.tsx` with columns: Scan ID (truncated), Repository, Branch, Commit SHA (truncated + copy), Duration, Files Scanned, Findings Count, Timestamp
+    - _Requirements: 24.1_
+  - [x] 13.2 Add filter controls for project/repository name and branch
+    - _Requirements: 24.3_
+  - [x] 13.3 Add "Source: Edge CLI" badge to each scan row
+    - _Requirements: 24.6_
+  - [x] 13.4 Add empty state directing user to run `sicario scan . --publish` locally; remove any "Trigger Scan" button
+    - _Requirements: 24.4, 24.5_
+
+- [x] 14. Scan Detail Page — full metadata, language breakdown
+  - [x] 14.1 Implement `ScanDetailPage.tsx` with full metadata section: repository, branch, full commit SHA with copy button, duration, files scanned, rules loaded, language breakdown
+    - _Requirements: 25.1, 25.2_
+  - [x] 14.2 Render language breakdown as a horizontal percentage bar or list
+    - _Requirements: 25.3_
+  - [x] 14.3 Add findings table filtered to this scan; clicking a row navigates to FindingDetailPage
+    - _Requirements: 25.4_
+  - [x] 14.4 Add "Source: Edge CLI" badge; remove any "Re-run", "Trigger", "Schedule" button; add empty state "No findings detected in this scan — clean edge scan."
+    - _Requirements: 25.5, 25.6, 25.7_
+
+- [x] 15. OWASP Page — read-only compliance from telemetry
+  - [x] 15.1 Implement OWASP compliance table in `OwaspPage.tsx`: each OWASP Top 10 category row with finding count, severity breakdown, compliance status (pass/fail/warning)
+    - _Requirements: 26.1_
+  - [x] 15.2 Wire category row click to navigate to FindingsPage filtered by OWASP category
+    - _Requirements: 26.2_
+  - [x] 15.3 Display compliance score percentage and "Data source: Edge CLI telemetry" label; remove any "Run Compliance Scan" button
+    - _Requirements: 26.3, 26.4, 26.5_
+  - [x] 15.4 Add PDF export for OWASP compliance report (client-side only)
+    - _Requirements: 26.6_
+
+- [x] 16. Analytics Page — trend charts from telemetry
+  - [x] 16.1 Implement `AnalyticsPage.tsx` with findings trend area chart (open/new/fixed over 30 days), severity distribution chart, MTTR bar chart by severity, scan frequency chart
+    - _Requirements: 27.1_
+  - [x] 16.2 Add "Data source: Edge CLI telemetry" label; remove any "Run Analysis" or "Refresh Data" button
+    - _Requirements: 27.2, 27.3, 27.4_
+  - [x] 16.3 Add empty state for fewer than 2 scans; add interactive tooltips on all charts
+    - _Requirements: 27.5, 27.6_
+
+- [x] 17. Settings Page — remove GitHub App section
+  - [x] 17.1 Remove "GitHub App", "Repository Connection", "Cloud Scanning", and "LLM API Keys" sections from `SettingsPage.tsx`
+    - _Requirements: 28.2_
+  - [x] 17.2 Ensure Members, Teams, Webhooks (outbound only), and Account sections remain intact
+    - Webhooks section must not reference GitHub webhook secrets or repository sync
+    - _Requirements: 28.1, 28.3, 28.4, 28.5, 28.6, 28.7_
+
+- [x] 18. PR Check Detail Page — remove GitHub Check Run references, add Remediation Handoff
+  - [x] 18.1 Remove `githubCheckRunId` field and "View on GitHub" link from `PrCheckDetailPage.tsx`
+    - _Requirements: 30.2_
+  - [x] 18.2 Display PR check result fields: PR number, repository URL, status badge, findings count, critical count, high count, associated scan ID
+    - _Requirements: 30.3_
+  - [x] 18.3 Render `RemediationHandoff` for each critical/high finding when check failed
+    - _Requirements: 30.4_
+  - [x] 18.4 Add "Source: Edge CLI (CI pipeline)" label; add empty state "No findings — clean CI scan."
+    - _Requirements: 30.5, 30.6_
+
+- [ ] 19. Checkpoint — Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+- [ ] 20. Property-Based Tests — all 10 correctness properties from design.md
+  - [ ]* 20.1 Property 1 — Demo Mode data shape matches live data shape (TypeScript compile-time)
+    - Annotate `DEMO_PROJECT`, `DEMO_FINDINGS`, `DEMO_SCAN` with explicit Convex return types; TypeScript compiler enforces this at build time — no runtime test needed
+    - **Property 1: Demo Mode data shape matches live data shape**
+    - **Validates: Requirements 18.1, 18.5**
+  - [ ]* 20.2 Write property test for `SnippetBlock` gradient rendering (Property 2)
+    - Use `fast-check` in `sicario-frontend/src/components/ui/__tests__/SnippetBlock.test.tsx`
+    - Single-line snippets → 0 gradient elements; multi-line snippets → 2 gradient elements
+    - **Property 2: Snippet fade-out only applies when snippet has more than one line**
+    - **Validates: Requirements 19.4, 7.2**
+  - [ ]* 20.3 Write integration test for Terminal Handshake auto-navigation (Property 3)
+    - Mock Convex query returning `provisioningState: "active"`, assert `navigate` called
+    - **Property 3: Terminal Handshake auto-navigates when `provisioningState === "active"`**
+    - **Validates: Requirements 3.6, 5.2**
+  - [ ]* 20.4 Write integration test for LiveTransition demo state purge (Property 4)
+    - Mock first telemetry arrival, assert demo state cleared and live queries active
+    - **Property 4: LiveTransition purges all demo state before rendering live data**
+    - **Validates: Requirements 5.3, 4.4**
+  - [ ]* 20.5 Write property test for Danger Zone delete confirmation (Property 5)
+    - Use `fast-check` in `sicario-frontend/src/components/dashboard/__tests__/DangerZoneTab.test.tsx`
+    - For any `projectName` and `userInput`, button disabled iff `userInput !== projectName`
+    - **Property 5: Danger Zone delete requires exact project name match**
+    - **Validates: Requirements 13.5**
+  - [ ]* 20.6 Write Convex unit test for `purgeTelemetry` no-orphans property (Property 6)
+    - In `convex/convex/__tests__/purgeTelemetry.test.ts` using Convex test harness
+    - For any project with N findings and M scans, after purge both queries return `[]`
+    - **Property 6: `purgeTelemetry` deletes all findings AND scans for the project**
+    - **Validates: Requirements 15.3, 15.4**
+  - [ ]* 20.7 Write Convex unit test for `deleteProject` idempotency (Property 7)
+    - In `convex/convex/__tests__/deleteProject.test.ts`
+    - After deletion, `projects.get` returns `null` regardless of prior findings/scans
+    - **Property 7: `deleteProject` leaves no project record in the database**
+    - **Validates: Requirements 16.3, 16.4, 16.6**
+  - [ ]* 20.8 Write property test for `isValidSlackWebhookUrl` (Property 8)
+    - Use `fast-check` in `sicario-frontend/src/lib/__tests__/validation.test.ts`
+    - For any URL string, result equals `url.startsWith('https://hooks.slack.com/')`
+    - **Property 8: Slack webhook URL validation accepts only `https://hooks.slack.com/` URLs**
+    - **Validates: Requirements 12.3**
+  - [ ]* 20.9 Write property test for `RemediationHandoff` command content (Property 9)
+    - Use `fast-check` in `sicario-frontend/src/components/dashboard/__tests__/RemediationHandoff.test.tsx`
+    - For any `findingId`, rendered command contains `sicario fix --id=${findingId}` verbatim
+    - **Property 9: Remediation Handoff command contains the exact finding ID**
+    - **Validates: Requirements 8.1**
+  - [ ]* 20.10 Write integration test for Demo Mode banner persistence (Property 10)
+    - Render multiple dashboard routes with `demoMode=true`, assert `DemoModeBanner` present on each
+    - **Property 10: Demo Mode banner is present on every dashboard page while Demo Mode is active**
+    - **Validates: Requirements 4.3, 29.3**
+
+- [x] 21. Accessibility — ARIA labels, roles, live regions
+  - [x] 21.1 Add `aria-label` to all data tables (findings table, scan history table, API keys table)
+    - _Requirements: 20.1_
+  - [x] 21.2 Verify all copy-to-clipboard buttons have descriptive `aria-label` attributes
+    - _Requirements: 20.2_
+  - [x] 21.3 Verify `DemoModeBanner` has `role="alert"` and `aria-live="polite"`
+    - _Requirements: 20.3_
+  - [x] 21.4 Verify "Waiting for edge telemetry…" indicator has `aria-live="polite"`
+    - _Requirements: 20.4_
+  - [x] 21.5 Verify all `TerminalBlock` instances have `role="region"` with descriptive `aria-label`
+    - _Requirements: 20.5_
+  - [x] 21.6 Verify `ExecutionAuditTrail` has `role="list"` with `role="listitem"` entries
+    - _Requirements: 20.6_
+
+- [ ] 22. Final Checkpoint — Ensure all tests pass
+  - Ensure all tests pass, ask the user if questions arise.
+
+## Notes
+
+- Tasks marked with `*` are optional and can be skipped for faster MVP
+- Each task references specific requirements for traceability
+- Checkpoints ensure incremental validation
+- Property tests validate universal correctness properties from the design document
+- Unit tests validate specific examples and edge cases
+- The design uses TypeScript/React throughout — no language selection needed

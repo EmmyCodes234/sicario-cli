@@ -87,6 +87,18 @@ Open an issue with:
 
 Do **not** open a public issue for security vulnerabilities. See [SECURITY.md](SECURITY.md).
 
+## Contributor License Agreement
+
+By submitting a pull request, you agree to the [Contributor License Agreement](CLA.md). All contributions must be covered by the CLA before they can be merged.
+
+The CLA grants the Licensor (Emmanuel Enyi) a perpetual, irrevocable, worldwide, royalty-free license to use, modify, sublicense, and relicense your contributions under any license, including the FSL-1.1 and any future open-source license (such as Apache 2.0 upon the Change Date). You retain copyright to your contributions.
+
+If you have not yet signed the CLA, please review [CLA.md](CLA.md) and indicate your agreement by adding your name to the CLA signatories list in your pull request description.
+
+## Contributing Rules
+
+To contribute detection rules to the community rule library, see the `sicario-rules` repository (Apache 2.0). That repository accepts YAML rule files and test fixtures — no Rust source code required.
+
 ## License
 
-By contributing, you agree your contributions will be licensed under the MIT License.
+Sicario is licensed under the [Functional Source License 1.1](LICENSE) (FSL-1.1). Contributions are accepted under the terms of the CLA described above.

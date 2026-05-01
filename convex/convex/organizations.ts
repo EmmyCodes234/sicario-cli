@@ -1,6 +1,7 @@
 import { mutation, query } from "./_generated/server";
 import { v } from "convex/values";
 import { getAuthUserId } from "@convex-dev/auth/server";
+import { internal } from "./_generated/api";
 
 /**
  * Returns true if the string looks like a raw Convex internal hash:
@@ -69,6 +70,47 @@ export const ensureOrg = mutation({
           }
         }
       }
+
+      // Redeem any pending invitations for this user's email.
+      // This handles the case where an existing user was invited to a new org
+      // after they already had an account — the auth callback only fires on
+      // signup, so we check here on every dashboard load (idempotent).
+      if (resolvedEmail) {
+        const normalizedEmail = resolvedEmail.toLowerCase();
+        const pendingInvitations = await ctx.db
+          .query("pendingInvitations")
+          .withIndex("by_email", (q: any) => q.eq("email", normalizedEmail))
+          .collect();
+
+        const now = new Date().toISOString();
+        for (const invitation of pendingInvitations) {
+          try {
+            // Check for duplicate membership before inserting
+            const alreadyMember = await ctx.db
+              .query("memberships")
+              .withIndex("by_userId", (q) => q.eq("userId", userId))
+              .filter((q) => q.eq(q.field("orgId"), invitation.orgId))
+              .first();
+            if (!alreadyMember) {
+              await ctx.db.insert("memberships", {
+                userId,
+                orgId: invitation.orgId,
+                role: invitation.role,
+                teamIds: invitation.teamIds,
+                createdAt: now,
+              });
+            }
+            await ctx.db.delete(invitation._id);
+          } catch (err) {
+            console.error(
+              `Failed to redeem pending invitation ${invitation.invitationId} ` +
+                `for email ${normalizedEmail}:`,
+              err
+            );
+          }
+        }
+      }
+
       return { orgId: existing.orgId, isNew: false };
     }
 
@@ -92,6 +134,9 @@ export const ensureOrg = mutation({
       teamIds: [],
       createdAt: now,
     });
+
+    // Seed a free subscription for the new org
+    await ctx.runMutation(internal.billing.createSubscriptionInternal, { orgId });
 
     return { orgId, isNew: true };
   },
@@ -130,6 +175,9 @@ export const createOrg = mutation({
       teamIds: [],
       createdAt: now,
     });
+
+    // Seed a free subscription for the new org
+    await ctx.runMutation(internal.billing.createSubscriptionInternal, { orgId });
 
     return { orgId };
   },
@@ -209,6 +257,60 @@ export const listUserOrgs = query({
   },
 });
 
+
+/**
+ * Rename an organization. Only admins of the org may rename it.
+ */
+export const renameOrg = mutation({
+  args: {
+    orgId: v.string(),
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const identity = await ctx.auth.getUserIdentity();
+    if (!identity) {
+      throw new Error("Not authenticated");
+    }
+
+    const userId =
+      identity.tokenIdentifier.split("|").pop() ??
+      identity.tokenIdentifier;
+
+    // Verify the caller is an admin of this org
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .filter((q) => q.eq(q.field("orgId"), args.orgId))
+      .first();
+
+    if (!membership) {
+      throw new Error("Not a member of this organization");
+    }
+    if (membership.role !== "admin") {
+      throw new Error("Only admins can rename the organization");
+    }
+
+    const trimmed = args.name.trim();
+    if (!trimmed) {
+      throw new Error("Organization name cannot be empty");
+    }
+    if (trimmed.length > 64) {
+      throw new Error("Organization name must be 64 characters or fewer");
+    }
+
+    const org = await ctx.db
+      .query("organizations")
+      .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+      .first();
+
+    if (!org) {
+      throw new Error("Organization not found");
+    }
+
+    await ctx.db.patch(org._id, { name: trimmed });
+    return { success: true };
+  },
+});
 
 /**
  * Get an organization by its orgId.

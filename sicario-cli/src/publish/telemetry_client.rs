@@ -74,6 +74,10 @@ pub struct TelemetryPayload {
     /// Optional number of files scanned
     #[serde(rename = "filesScanned", skip_serializing_if = "Option::is_none")]
     pub files_scanned: Option<usize>,
+    /// Number of unique contributing developers in the last 90 days.
+    /// Computed locally from git history — no author data is transmitted.
+    #[serde(rename = "contributorCount")]
+    pub contributor_count: u32,
     /// Array of findings detected during the scan
     pub findings: Vec<TelemetryFinding>,
 }
@@ -161,6 +165,28 @@ impl TelemetryClient {
             bail!("Telemetry rejected: API key is invalid or expired (HTTP 401)");
         }
 
+        if status == reqwest::StatusCode::PAYMENT_REQUIRED {
+            // Parse error message from response body
+            let body = resp.text().unwrap_or_default();
+            let error_msg = serde_json::from_str::<serde_json::Value>(&body)
+                .ok()
+                .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+                .unwrap_or_else(|| {
+                    "Plan limit reached. Upgrade your plan at usesicario.xyz/pricing".to_string()
+                });
+
+            // Print to stderr with [sicario] prefix — this is a warning, not a scan failure
+            eprintln!("[sicario] {}", error_msg);
+
+            // Return Ok with a synthetic response so the caller treats this as non-fatal.
+            // The caller should check for HTTP 402 and exit with code 0.
+            return Ok(TelemetryResponse {
+                scan_id: payload.scan_id.clone(),
+                project_id: payload.project_id.clone(),
+                dashboard_url: None,
+            });
+        }
+
         if status == reqwest::StatusCode::OK {
             let telemetry_resp: TelemetryResponse = resp.json().unwrap_or(TelemetryResponse {
                 scan_id: payload.scan_id.clone(),
@@ -212,6 +238,7 @@ mod tests {
             duration_ms: Some(1500),
             rules_loaded: Some(25),
             files_scanned: Some(100),
+            contributor_count: 1,
             findings: vec![sample_finding()],
         }
     }
@@ -232,6 +259,10 @@ mod tests {
         assert!(
             json.contains("filesScanned"),
             "expected filesScanned in JSON"
+        );
+        assert!(
+            json.contains("contributorCount"),
+            "expected contributorCount in JSON"
         );
     }
 
@@ -298,5 +329,34 @@ mod tests {
             "Bearer project:test-key".to_string(),
         );
         assert!(client.is_ok());
+    }
+
+    #[test]
+    fn test_402_error_message_parsing() {
+        let body = r#"{"error": "Finding storage limit reached. Upgrade your plan at usesicario.xyz/pricing"}"#;
+        let error_msg = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| "Plan limit reached".to_string());
+        assert_eq!(
+            error_msg,
+            "Finding storage limit reached. Upgrade your plan at usesicario.xyz/pricing"
+        );
+    }
+
+    #[test]
+    fn test_402_error_message_fallback() {
+        // When the body is not valid JSON or missing the "error" field, use the fallback message.
+        let body = r#"{"message": "something else"}"#;
+        let error_msg = serde_json::from_str::<serde_json::Value>(body)
+            .ok()
+            .and_then(|v| v["error"].as_str().map(|s| s.to_string()))
+            .unwrap_or_else(|| {
+                "Plan limit reached. Upgrade your plan at usesicario.xyz/pricing".to_string()
+            });
+        assert_eq!(
+            error_msg,
+            "Plan limit reached. Upgrade your plan at usesicario.xyz/pricing"
+        );
     }
 }

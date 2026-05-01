@@ -10,4 +10,11 @@ crons.daily(
   internal.scheduledScans.runScheduledScaScan
 );
 
+// Reset seat counts at the start of each billing period (1st of month, 2:00 AM UTC)
+crons.monthly(
+  "reset-seat-counts",
+  { day: 1, hourUTC: 2, minuteUTC: 0 },
+  internal.billing.resetAllSeatCounts,
+);
+
 export default crons;

@@ -163,6 +163,44 @@ export const remove = mutation({
   },
 });
 
+/**
+ * Leave an organization. Any member can call this to remove themselves.
+ * Admins cannot leave if they are the only admin — they must transfer
+ * ownership first.
+ */
+export const leaveOrg = mutation({
+  args: {
+    userId: v.string(),
+    orgId: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const membership = await ctx.db
+      .query("memberships")
+      .withIndex("by_userId_orgId", (q) =>
+        q.eq("userId", args.userId).eq("orgId", args.orgId)
+      )
+      .first();
+    if (!membership) throw new Error("You are not a member of this organization");
+
+    // Prevent the last admin from leaving
+    if (membership.role === "admin") {
+      const allMemberships = await ctx.db
+        .query("memberships")
+        .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+        .collect();
+      const adminCount = allMemberships.filter((m) => m.role === "admin").length;
+      if (adminCount <= 1) {
+        throw new Error(
+          "You are the only admin. Transfer ownership to another member before leaving."
+        );
+      }
+    }
+
+    await ctx.db.delete(membership._id);
+    return true;
+  },
+});
+
 function mapMembership(m: any, displayName?: string | null) {
   return {
     user_id: m.userId,

@@ -81,6 +81,18 @@ pub struct ScanArgs {
     #[arg(long)]
     pub rules: Vec<String>,
 
+    /// Directory containing custom YAML rule files to load.
+    /// User rules take precedence over built-in rules on ID conflicts.
+    /// If the path doesn't exist or has no valid YAML files, a warning is printed
+    /// and scanning continues with built-in rules only.
+    #[arg(long)]
+    pub rules_dir: Option<String>,
+
+    /// Watch mode: continuously re-scan on file changes.
+    /// Debounces events by 100ms. Press Ctrl+C to exit cleanly.
+    #[arg(long)]
+    pub watch: bool,
+
     /// Output format
     #[arg(long, value_enum, default_value = "text")]
     pub format: OutputFormat,
@@ -212,6 +224,13 @@ pub struct ScanArgs {
     /// Overrides SICARIO_SNIPPET_CONTEXT env var.
     #[arg(long)]
     pub snippet_context: Option<u8>,
+
+    /// Suppress the patch receipt output in watch mode (for clean CI logs).
+    ///
+    /// By default, a zero-exfiltration receipt is printed after every
+    /// `[resolved]` event in watch mode. Use this flag to suppress it.
+    #[arg(long)]
+    pub no_receipt: bool,
 }
 
 impl Default for ScanArgs {
@@ -220,6 +239,8 @@ impl Default for ScanArgs {
             path: ".".to_string(),
             dir: None,
             rules: Vec::new(),
+            rules_dir: None,
+            watch: false,
             format: OutputFormat::Text,
             severity_threshold: SeverityLevel::Low,
             min_severity: SeverityLevel::Low,
@@ -251,6 +272,7 @@ impl Default for ScanArgs {
             org: None,
             fail_on: None,
             snippet_context: None,
+            no_receipt: false,
         }
     }
 }

@@ -32,6 +32,22 @@ pub struct FixArgs {
     /// Overrides the SICARIO_MAX_ITERATIONS environment variable.
     #[arg(long, env = "SICARIO_MAX_ITERATIONS", default_value_t = DEFAULT_MAX_ITERATIONS)]
     pub max_iterations: u32,
+
+    /// Pre-approve AI Fallback without the interactive prompt (for CI use).
+    ///
+    /// When set, Sicario will transmit file context to the LLM without asking
+    /// for consent. A one-line notice is printed before each LLM call.
+    /// Without this flag, Sicario halts and prompts the user when no
+    /// deterministic template is found (zero-exfiltration by default).
+    #[arg(long)]
+    pub allow_ai: bool,
+
+    /// Suppress the patch receipt output (for clean CI logs).
+    ///
+    /// By default, a zero-exfiltration receipt is printed after every
+    /// successful patch. Use this flag to suppress it.
+    #[arg(long)]
+    pub no_receipt: bool,
 }
 
 impl FixArgs {

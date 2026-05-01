@@ -32,6 +32,7 @@ mod publish;
 mod rule_harness;
 mod snippet;
 mod suppression_learner;
+mod telemetry;
 mod verification;
 
 use anyhow::Result;
@@ -164,6 +165,82 @@ fn dispatch(cmd: Command) -> Result<ExitCode> {
     }
 }
 
+// ─── Rules-dir loading helper ─────────────────────────────────────────────────
+
+/// Load YAML rule files from a user-specified `--rules-dir` path into `eng`.
+///
+/// Returns `(rules_loaded, warning_message)` where `warning_message` is `Some`
+/// when the path does not exist or contains no valid YAML rule files.  The
+/// caller is responsible for printing the warning (so that tests can inspect
+/// it without capturing stderr).
+///
+/// The function never exits the process — it always continues with whatever
+/// rules are already loaded in `eng`.
+pub fn load_rules_from_dir(
+    rules_dir_path: &str,
+    eng: &mut engine::sast_engine::SastEngine,
+    quiet: bool,
+) -> (usize, Option<String>) {
+    let rules_dir = PathBuf::from(rules_dir_path);
+
+    if !rules_dir.exists() {
+        let msg = format!(
+            "[sicario] warning: --rules-dir path does not exist: {}. Using built-in rules only.",
+            rules_dir_path
+        );
+        if !quiet {
+            eprintln!("{}", msg);
+        }
+        return (0, Some(msg));
+    }
+
+    match std::fs::read_dir(&rules_dir) {
+        Ok(entries) => {
+            let mut yaml_files: Vec<PathBuf> = entries
+                .filter_map(|e| e.ok())
+                .map(|e| e.path())
+                .filter(|p| {
+                    p.extension()
+                        .and_then(|e| e.to_str())
+                        .map(|e| e == "yaml" || e == "yml")
+                        .unwrap_or(false)
+                })
+                .collect();
+            yaml_files.sort();
+
+            let mut user_rules_loaded = 0usize;
+            for f in &yaml_files {
+                if eng.load_rules(f).is_ok() {
+                    user_rules_loaded += 1;
+                }
+            }
+
+            if user_rules_loaded == 0 {
+                let msg = format!(
+                    "[sicario] warning: --rules-dir path contains no valid YAML rule files: {}. Using built-in rules only.",
+                    rules_dir_path
+                );
+                if !quiet {
+                    eprintln!("{}", msg);
+                }
+                return (0, Some(msg));
+            }
+
+            (user_rules_loaded, None)
+        }
+        Err(e) => {
+            let msg = format!(
+                "[sicario] warning: could not read --rules-dir '{}': {}. Using built-in rules only.",
+                rules_dir_path, e
+            );
+            if !quiet {
+                eprintln!("{}", msg);
+            }
+            (0, Some(msg))
+        }
+    }
+}
+
 // ─── Scan command ─────────────────────────────────────────────────────────────
 
 fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
@@ -200,12 +277,17 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         }
     }
 
+    // Load user rules from --rules-dir (user rules take precedence on ID conflicts)
+    if let Some(ref rules_dir_path) = args.rules_dir {
+        let (loaded, _warning) = load_rules_from_dir(rules_dir_path, &mut eng, args.quiet);
+        rules_loaded += loaded;
+    }
+
     // If no rule files were found on disk, fall back to the hardcoded default
     // rules so the AST engine always has at least one active rule.
     if eng.get_rules().is_empty() {
         eng.load_default_rules();
     }
-
     // Count files to scan for the summary — also capture ignored count
     let mut files_to_scan = Vec::new();
     let files_ignored = eng.collect_files_with_ignored_count(&dir, &mut files_to_scan)?;
@@ -547,7 +629,301 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
         }
     }
 
+    // ── Watch mode ────────────────────────────────────────────────────────
+    if args.watch {
+        run_watch_mode(&dir, &args, exit_code)?;
+        return Ok(ExitCode::Clean);
+    }
+
     Ok(exit_code)
+}
+
+// ── Watch mode ────────────────────────────────────────────────────────────────
+
+/// A finding identity key used to diff watch-mode scans.
+///
+/// Stores the rule_id, line number, and severity so we can emit the correct
+/// `[resolved] <rule_id> at <file>:<line>` format (Req 18.5) and accurately
+/// update the live summary counters when findings are resolved.
+#[derive(Clone, PartialEq, Eq)]
+struct FindingKey {
+    rule_id: String,
+    line: usize,
+    severity: engine::vulnerability::Severity,
+}
+
+impl FindingKey {
+    fn new(
+        rule_id: impl Into<String>,
+        line: usize,
+        severity: engine::vulnerability::Severity,
+    ) -> Self {
+        Self {
+            rule_id: rule_id.into(),
+            line,
+            severity,
+        }
+    }
+}
+
+/// Recompute the aggregate severity counts from all currently tracked findings.
+///
+/// This is called after every scan event to produce an accurate live summary
+/// line rather than relying on incremental counter arithmetic (which can drift
+/// when the same finding appears/disappears across multiple rapid saves).
+fn compute_watch_summary(
+    prev_findings: &std::collections::HashMap<String, Vec<FindingKey>>,
+) -> (u32, u32, u32, u32) {
+    use engine::vulnerability::Severity;
+    let mut critical = 0u32;
+    let mut high = 0u32;
+    let mut medium = 0u32;
+    let mut low = 0u32;
+    for keys in prev_findings.values() {
+        for fk in keys {
+            match fk.severity {
+                Severity::Critical => critical += 1,
+                Severity::High => high += 1,
+                Severity::Medium => medium += 1,
+                _ => low += 1, // Low + Info both count as "Low" in the summary
+            }
+        }
+    }
+    (critical, high, medium, low)
+}
+
+/// Print (or overwrite) the live watch summary line.
+///
+/// On a TTY, uses `\r` to overwrite the current line in-place so the summary
+/// stays at the bottom of the terminal without scrolling.  On a non-TTY (e.g.
+/// piped output, CI), falls back to a plain newline so the log is readable.
+fn print_watch_summary(critical: u32, high: u32, medium: u32, low: u32, is_tty: bool) {
+    let line = format!(
+        "[watch] Critical: {}  High: {}  Medium: {}  Low: {}",
+        critical, high, medium, low
+    );
+    if is_tty {
+        // Pad to 80 chars to overwrite any longer previous line, then \r to
+        // return the cursor to the start of the line without advancing.
+        eprint!("\r{:<80}\r{}", "", line);
+    } else {
+        eprintln!("{}", line);
+    }
+}
+
+/// Run the scanner in continuous watch mode.
+///
+/// Uses `notify` to watch the target directory for file changes, debounces
+/// events by 100ms, and re-scans only the affected file on each change.
+/// Respects `.gitignore` and `.sicarioignore` patterns via the `ExclusionManager`.
+/// Handles Ctrl+C with a clean exit code 0.
+///
+/// Requirements: 18.1, 18.2, 18.4, 18.5, 18.6
+fn run_watch_mode(
+    dir: &std::path::Path,
+    args: &cli::scan::ScanArgs,
+    _initial_exit_code: ExitCode,
+) -> Result<()> {
+    use engine::sast_engine::SastEngine;
+    use engine::vulnerability::Vulnerability;
+    use notify::{RecursiveMode, Watcher};
+    use notify_debouncer_mini::new_debouncer;
+    use output::formatter::FormatterConfig;
+    use parser::ExclusionManager;
+    use std::collections::HashMap;
+    use std::io::IsTerminal;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    // Detect color support for diagnostic output
+    let color_enabled = std::io::stderr().is_terminal();
+    // Detect whether stderr is a TTY for in-place summary line updates
+    let is_tty = std::io::stderr().is_terminal();
+
+    eprintln!(
+        "[watch] Watching {} for changes. Press Ctrl+C to exit.",
+        dir.display()
+    );
+
+    // Build the exclusion manager once for the watched directory.
+    // This loads .gitignore and .sicarioignore patterns from `dir` so that
+    // file change events for excluded paths are silently skipped (Req 18.6).
+    let exclusion_manager =
+        ExclusionManager::new(dir).unwrap_or_else(|_| ExclusionManager::empty());
+
+    // Set up Ctrl+C (SIGINT) handler using a shared atomic flag.
+    // When the user presses Ctrl+C, the flag is set to false and the main
+    // watch loop exits cleanly, printing "[watch] Exiting..." and returning
+    // exit code 0 (Req 18.3).
+    let running = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(true));
+    {
+        let r = running.clone();
+        ctrlc::set_handler(move || {
+            r.store(false, std::sync::atomic::Ordering::SeqCst);
+        })
+        .unwrap_or_else(|e| {
+            eprintln!("[watch] warning: could not set Ctrl+C handler: {e}");
+        });
+    }
+
+    let (tx, rx) = mpsc::channel();
+
+    let mut debouncer = new_debouncer(Duration::from_millis(100), tx)
+        .map_err(|e| anyhow::anyhow!("Failed to create file watcher: {e}"))?;
+
+    debouncer
+        .watcher()
+        .watch(dir, RecursiveMode::Recursive)
+        .map_err(|e| anyhow::anyhow!("Failed to watch directory: {e}"))?;
+
+    // Track previous findings per file for diff.
+    // Key: canonical file path string → Vec of FindingKey (rule_id + line + severity).
+    let mut prev_findings: HashMap<String, Vec<FindingKey>> = HashMap::new();
+
+    while running.load(std::sync::atomic::Ordering::SeqCst) {
+        match rx.recv_timeout(Duration::from_millis(200)) {
+            Ok(Ok(events)) => {
+                for event in events {
+                    let path = &event.path;
+
+                    // Skip non-source files
+                    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+                    let is_source = matches!(
+                        ext,
+                        "js" | "ts" | "jsx" | "tsx" | "py" | "rs" | "go" | "java"
+                    );
+                    if !is_source {
+                        continue;
+                    }
+
+                    // Respect .gitignore and .sicarioignore exclusion patterns (Req 18.6).
+                    // If the changed file matches any exclusion pattern, skip it silently.
+                    if exclusion_manager.is_excluded(path) {
+                        continue;
+                    }
+
+                    let file_key = path.to_string_lossy().to_string();
+
+                    if !path.exists() {
+                        // File deleted — mark all its findings as resolved (Req 18.5)
+                        if let Some(old) = prev_findings.remove(&file_key) {
+                            for fk in &old {
+                                eprintln!("[resolved] {} at {}:{}", fk.rule_id, file_key, fk.line);
+                                // Emit zero-exfiltration receipt for each resolved finding
+                                if !args.no_receipt {
+                                    let receipt = remediation::PatchReceipt::deterministic(
+                                        &fk.rule_id,
+                                        &file_key,
+                                        fk.line as u32,
+                                        0,
+                                        &fk.rule_id,
+                                    );
+                                    receipt.print();
+                                }
+                            }
+                        }
+                        // Recompute and print the live summary after deletion
+                        let (c, h, m, l) = compute_watch_summary(&prev_findings);
+                        print_watch_summary(c, h, m, l, is_tty);
+                        continue;
+                    }
+
+                    // Re-scan the affected file
+                    let mut eng = match SastEngine::new(dir) {
+                        Ok(e) => e,
+                        Err(_) => continue,
+                    };
+
+                    // Load rules
+                    let rule_files = discover_bundled_rules();
+                    for f in &rule_files {
+                        let _ = eng.load_rules(f);
+                    }
+                    if eng.get_rules().is_empty() {
+                        eng.load_default_rules();
+                    }
+
+                    let new_vulns: Vec<Vulnerability> = eng.scan_file(path).unwrap_or_default();
+
+                    // Build the new finding key set (includes severity for accurate summary)
+                    let new_keys: Vec<FindingKey> = new_vulns
+                        .iter()
+                        .map(|v| FindingKey::new(&v.rule_id, v.line, v.severity))
+                        .collect();
+
+                    let old_keys = prev_findings.get(&file_key).cloned().unwrap_or_default();
+
+                    // ── Print NEW findings in standard diagnostic format (Req 18.4) ──
+                    // Collect only the truly new findings (absent from the previous scan).
+                    let new_findings: Vec<&Vulnerability> = new_vulns
+                        .iter()
+                        .filter(|v| {
+                            !old_keys
+                                .iter()
+                                .any(|fk| fk.rule_id == v.rule_id && fk.line == v.line)
+                        })
+                        .collect();
+
+                    if !new_findings.is_empty() {
+                        let mut stderr = std::io::stderr();
+                        // Render each new finding using the same diagnostic format as
+                        // `sicario scan` (miette-style with source context box).
+                        for v in &new_findings {
+                            let single = std::slice::from_ref(*v);
+                            let _ = output::diagnostics::render_diagnostics(
+                                single,
+                                color_enabled,
+                                &mut stderr,
+                            );
+                        }
+                    }
+
+                    // ── Print RESOLVED findings (Req 18.5) ──
+                    // Format: `[resolved] <rule_id> at <file>:<line>`
+                    for fk in &old_keys {
+                        if !new_keys
+                            .iter()
+                            .any(|nk| nk.rule_id == fk.rule_id && nk.line == fk.line)
+                        {
+                            eprintln!("[resolved] {} at {}:{}", fk.rule_id, file_key, fk.line);
+                            // Emit zero-exfiltration receipt for each resolved finding
+                            if !args.no_receipt {
+                                let receipt = remediation::PatchReceipt::deterministic(
+                                    &fk.rule_id,
+                                    &file_key,
+                                    fk.line as u32,
+                                    0,
+                                    &fk.rule_id,
+                                );
+                                receipt.print();
+                            }
+                        }
+                    }
+
+                    // Update stored findings for this file
+                    prev_findings.insert(file_key, new_keys);
+
+                    // Recompute and print the live summary line (Req 18.6)
+                    // Counts are derived from the full prev_findings map so they
+                    // are always accurate regardless of add/remove ordering.
+                    let (c, h, m, l) = compute_watch_summary(&prev_findings);
+                    print_watch_summary(c, h, m, l, is_tty);
+                }
+            }
+            Ok(Err(errors)) => {
+                eprintln!("[watch] watcher error: {errors}");
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                // No events — check running flag
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                break;
+            }
+        }
+    }
+
+    eprintln!("\n[watch] Exiting...");
+    Ok(())
 }
 
 /// Submit scan results to the zero-exfiltration telemetry endpoint (best-effort, never fails the scan).
@@ -572,6 +948,49 @@ fn submit_telemetry(
         collect_git_metadata, resolve_cloud_url, TelemetryClient, TelemetryFinding,
         TelemetryPayload,
     };
+
+    // ── Unauthenticated guard ─────────────────────────────────────────────
+    // Check whether any credential is available before attempting to publish.
+    // We mirror the 5-level priority chain from AuthModule::resolve_auth_token()
+    // without touching the network or the keychain for the check itself.
+    //
+    // If no credential is found at all, print a friendly sign-up prompt and
+    // return with exit code 0 (not a scan failure).
+    {
+        use auth::token_store::TokenStore;
+
+        let has_sicario_api_key = std::env::var("SICARIO_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_project_api_key = std::env::var("SICARIO_PROJECT_API_KEY")
+            .map(|v| !v.is_empty())
+            .unwrap_or(false);
+        let has_cloud_token = TokenStore::new()
+            .ok()
+            .and_then(|ts| ts.get_cloud_token().ok())
+            .map(|t| !t.is_empty())
+            .unwrap_or(false);
+        let has_keychain_project_key = TokenStore::new()
+            .ok()
+            .and_then(|ts| ts.get_project_api_key_from_keychain().ok())
+            .map(|k| !k.is_empty())
+            .unwrap_or(false);
+        let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let has_config_api_key = crate::key_manager::config_file::load_config_file(&cwd)
+            .and_then(|c| c.api_key)
+            .map(|k| !k.is_empty())
+            .unwrap_or(false);
+
+        if !has_sicario_api_key
+            && !has_cloud_token
+            && !has_project_api_key
+            && !has_keychain_project_key
+            && !has_config_api_key
+        {
+            eprintln!("Publishing requires a free account. Sign up at https://usesicario.xyz/auth");
+            return;
+        }
+    }
 
     // ── Telemetry severity gate ───────────────────────────────────────────
     // Default: only publish Medium and above to prevent Low/Info noise from
@@ -696,6 +1115,10 @@ fn submit_telemetry(
         .ok()
         .and_then(|s| s.parse().ok());
 
+    // Count unique contributors in the last 90 days from local git history.
+    // Only the integer count is included — no author names or emails are transmitted.
+    let contributor_count = crate::telemetry::count_contributors(&cwd);
+
     let payload = TelemetryPayload {
         project_id,
         repository_url,
@@ -710,6 +1133,7 @@ fn submit_telemetry(
         duration_ms: Some(scan_duration.as_millis() as u64),
         rules_loaded: Some(rules_loaded),
         files_scanned: Some(files_scanned),
+        contributor_count,
         findings,
     };
 
@@ -1128,7 +1552,7 @@ fn discover_bundled_rules() -> Vec<PathBuf> {
 }
 
 /// Recursively collect all `.yaml` / `.yml` files under `dir`.
-fn collect_yaml_files_recursive(dir: &PathBuf) -> Vec<PathBuf> {
+fn collect_yaml_files_recursive(dir: &std::path::Path) -> Vec<PathBuf> {
     let mut result = Vec::new();
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.filter_map(|e| e.ok()) {
@@ -1323,7 +1747,7 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
         return Ok(ExitCode::Clean);
     }
 
-    let engine = RemediationEngine::new(&cwd)?;
+    let engine = RemediationEngine::new_with_allow_ai(&cwd, args.allow_ai)?;
 
     if args.yes {
         // Batch mode: process all vulnerabilities without per-fix prompts
@@ -1342,6 +1766,7 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
         // Interactive mode: confirm each fix individually, with iteration cap
         for vuln in &file_vulns {
             let mut guard = IterationGuard::new(max_iterations, &cwd);
+            let fix_start = std::time::Instant::now();
             let patch = loop {
                 match engine.generate_patch(vuln) {
                     Ok(p) => break p,
@@ -1377,7 +1802,20 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
             let confirmed = engine.display_diff_and_confirm(&patch)?;
             if confirmed {
                 engine.apply_patch(&patch)?;
+                let execution_ms = fix_start.elapsed().as_millis();
                 eprintln!("sicario: patch applied to {}", args.file);
+
+                // Emit zero-exfiltration receipt (unless suppressed with --no-receipt)
+                if !args.no_receipt {
+                    let receipt = remediation::PatchReceipt::deterministic(
+                        &vuln.rule_id,
+                        &args.file,
+                        vuln.line as u32,
+                        execution_ms,
+                        &vuln.rule_id,
+                    );
+                    receipt.print();
+                }
 
                 // Post-fix verification
                 if !args.no_verify {
@@ -1520,61 +1958,165 @@ fn cmd_config(args: cli::config::ConfigCommand) -> Result<ExitCode> {
             eprintln!("  SICARIO_API_KEY is separate — it authenticates telemetry uploads only.");
         }
         ConfigAction::SetProvider(provider_args) => {
-            let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+            use key_manager::{find_provider, PROVIDERS};
 
-            let model = provider_args
-                .model
-                .unwrap_or_else(|| "gpt-4o-mini".to_string());
+            // Determine endpoint and model from either the named preset or explicit flags
+            let (endpoint, model, provider_name) = if let Some(ref name) = provider_args.name {
+                match find_provider(name) {
+                    Some(preset) => {
+                        let ep = provider_args
+                            .endpoint
+                            .clone()
+                            .unwrap_or_else(|| preset.endpoint.to_string());
+                        let mdl = provider_args
+                            .model
+                            .clone()
+                            .unwrap_or_else(|| preset.default_model.to_string());
+                        (ep, mdl, preset.name.to_string())
+                    }
+                    None => {
+                        let valid: Vec<&str> = PROVIDERS.iter().map(|p| p.name).collect();
+                        eprintln!(
+                            "Unknown provider '{}'. Valid providers: {}",
+                            name,
+                            valid.join(", ")
+                        );
+                        return Ok(ExitCode::InternalError);
+                    }
+                }
+            } else if let Some(ref ep) = provider_args.endpoint {
+                let mdl = provider_args
+                    .model
+                    .clone()
+                    .unwrap_or_else(|| "gpt-4o-mini".to_string());
+                (ep.clone(), mdl, "custom".to_string())
+            } else {
+                eprintln!("sicario config set-provider: provide a provider name or --endpoint");
+                return Ok(ExitCode::InternalError);
+            };
 
-            // Load existing config (if any) to preserve extra fields, then update
-            let mut config = key_manager::config_file::load_config_file(&cwd).unwrap_or_default();
-            config.endpoint = Some(provider_args.endpoint.clone());
-            config.model = Some(model.clone());
+            // Write llm_endpoint and llm_model to ~/.sicario/config.toml (global config)
+            config::set_global_config_value("llm_endpoint", &endpoint)?;
+            config::set_global_config_value("llm_model", &model)?;
 
-            key_manager::config_file::save_config_file(&cwd, &config)?;
+            let config_path = config::global_config_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "~/.sicario/config.toml".to_string());
             eprintln!(
-                "sicario: provider set to {} (model: {})",
-                provider_args.endpoint, model
+                "Provider set to {}: endpoint={}, model={}",
+                provider_name, endpoint, model
             );
+            eprintln!("  Written to {}", config_path);
         }
         ConfigAction::Show => {
-            let ep = key_manager::resolve_endpoint_with_source();
-            let mdl = key_manager::resolve_model_with_source();
-            let key_info = key_manager::resolve_api_key();
-            let key_source = key_info
-                .map(|k| k.source.label().to_string())
-                .unwrap_or_else(|| "not configured".to_string());
+            use key_manager::PROVIDERS;
 
-            println!("Endpoint: {} (from {})", ep.value, ep.source.label());
-            println!("Model:    {} (from {})", mdl.value, mdl.source.label());
-            println!("API Key:  {key_source}");
-
-            // Show LLM BYOK key resolution (Zero-Liability boundary)
+            // ── Provider table (all 19 providers) ────────────────────────────
+            println!("Supported LLM Providers ({} total):", PROVIDERS.len());
             println!();
-            println!("LLM Key Resolution (for `sicario fix`, never sent to cloud):");
-            match config::resolve_llm_api_key() {
-                Some(resolved) => {
-                    println!(
-                        "  Provider: {} (from {})",
-                        resolved.provider.label(),
-                        resolved.source.label()
-                    );
-                }
-                None => {
-                    println!("  Not configured. Run `sicario config set ANTHROPIC_API_KEY <key>`");
-                    println!(
-                        "  or set the ANTHROPIC_API_KEY / OPENAI_API_KEY environment variable."
-                    );
-                }
+
+            // Compute column widths dynamically for clean alignment
+            let name_w = PROVIDERS
+                .iter()
+                .map(|p| p.name.len())
+                .max()
+                .unwrap_or(10)
+                .max(4);
+            let ep_w = 55usize; // truncate long endpoints to keep table readable
+            let model_w = PROVIDERS
+                .iter()
+                .map(|p| {
+                    if p.default_model.is_empty() {
+                        26
+                    } else {
+                        p.default_model.len()
+                    }
+                })
+                .max()
+                .unwrap_or(13)
+                .max(13);
+            let envvar_w = PROVIDERS
+                .iter()
+                .map(|p| {
+                    if p.env_var.is_empty() {
+                        6
+                    } else {
+                        p.env_var.len()
+                    }
+                })
+                .max()
+                .unwrap_or(7)
+                .max(7);
+
+            // Header
+            println!(
+                "{:<name_w$}  {:<ep_w$}  {:<model_w$}  {:<envvar_w$}",
+                "NAME",
+                "ENDPOINT",
+                "DEFAULT MODEL",
+                "ENV VAR",
+                name_w = name_w,
+                ep_w = ep_w,
+                model_w = model_w,
+                envvar_w = envvar_w,
+            );
+            println!(
+                "{:-<name_w$}  {:-<ep_w$}  {:-<model_w$}  {:-<envvar_w$}",
+                "",
+                "",
+                "",
+                "",
+                name_w = name_w,
+                ep_w = ep_w,
+                model_w = model_w,
+                envvar_w = envvar_w,
+            );
+
+            for p in PROVIDERS {
+                let endpoint_display = if p.endpoint.len() > ep_w {
+                    format!("{}…", &p.endpoint[..ep_w - 1])
+                } else {
+                    p.endpoint.to_string()
+                };
+                let model_display = if p.default_model.is_empty() {
+                    "(local — auto-detected)".to_string()
+                } else {
+                    p.default_model.to_string()
+                };
+                let envvar_display = if p.env_var.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    p.env_var.to_string()
+                };
+                println!(
+                    "{:<name_w$}  {:<ep_w$}  {:<model_w$}  {:<envvar_w$}",
+                    p.name,
+                    endpoint_display,
+                    model_display,
+                    envvar_display,
+                    name_w = name_w,
+                    ep_w = ep_w,
+                    model_w = model_w,
+                    envvar_w = envvar_w,
+                );
             }
 
-            // Telemetry auth separation note
+            // ── Active key source (no network request, no key value) ──────────
             println!();
-            println!("Telemetry Auth (SICARIO_API_KEY — for cloud uploads only):");
-            match std::env::var("SICARIO_API_KEY") {
-                Ok(k) if !k.is_empty() => println!("  Set via environment variable"),
-                _ => println!("  Not set (required for `sicario scan --publish`)"),
+            let key_source = key_manager::resolve_key_source_no_network();
+            let active_label = match &key_source {
+                key_manager::KeySource::None => "not configured".to_string(),
+                key_manager::KeySource::Keyring => "OS keyring".to_string(),
+                key_manager::KeySource::ConfigFile => ".sicario/config.yaml".to_string(),
+                other => format!("{} env var", other.label()),
+            };
+            println!("Active key source: {}", active_label);
+            if key_source == key_manager::KeySource::None {
+                println!("  Run `sicario config set-key <key>` or set OPENAI_API_KEY / ANTHROPIC_API_KEY.");
             }
+
+            println!();
+            println!("Use `sicario config set-provider <name>` to switch providers.");
         }
         ConfigAction::DeleteKey => {
             key_manager::delete_key_from_keyring()?;
@@ -1682,4 +2224,227 @@ fn cmd_report_handler(dir_str: &str, output: Option<&str>) -> Result<()> {
         report.total_vulnerabilities, report.categories_affected
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use engine::sast_engine::SastEngine;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    /// Helper: create a minimal valid YAML rule file in `dir`.
+    fn write_valid_yaml_rule(dir: &std::path::Path, filename: &str) {
+        let content = r#"
+- id: test-rule-001
+  name: "Test Rule"
+  description: "Test rule for warning tests"
+  severity: Low
+  languages:
+    - JavaScript
+  pattern:
+    query: "(call_expression function: (identifier) @fn (#eq? @fn \"eval\")) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-95"
+"#;
+        let path = dir.join(filename);
+        let mut f = fs::File::create(&path).unwrap();
+        f.write_all(content.as_bytes()).unwrap();
+    }
+
+    /// Helper: create a non-YAML file in `dir`.
+    fn write_non_yaml_file(dir: &std::path::Path, filename: &str) {
+        let path = dir.join(filename);
+        fs::write(&path, "this is not yaml").unwrap();
+    }
+
+    // ── Test 1: non-existent path ─────────────────────────────────────────────
+
+    /// When `--rules-dir` points to a path that does not exist, `load_rules_from_dir`
+    /// must return 0 rules loaded and a warning message containing the path.
+    ///
+    /// Validates: Requirement 17.4 (IF the path does not exist … print a warning
+    /// and continue with built-in rules only)
+    #[test]
+    fn test_rules_dir_nonexistent_returns_warning() {
+        let temp = TempDir::new().unwrap();
+        let nonexistent = temp.path().join("does_not_exist");
+        let path_str = nonexistent.to_string_lossy().to_string();
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        let (loaded, warning) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert_eq!(
+            loaded, 0,
+            "No rules should be loaded from a non-existent path"
+        );
+        let warning = warning.expect("A warning message must be returned for a non-existent path");
+        assert!(
+            warning.contains("[sicario] warning"),
+            "Warning must carry the [sicario] prefix; got: {warning}"
+        );
+        assert!(
+            warning.contains(&path_str),
+            "Warning must include the offending path; got: {warning}"
+        );
+        assert!(
+            warning.to_lowercase().contains("does not exist"),
+            "Warning must mention that the path does not exist; got: {warning}"
+        );
+        assert!(
+            warning.to_lowercase().contains("built-in rules only"),
+            "Warning must mention falling back to built-in rules; got: {warning}"
+        );
+    }
+
+    /// A non-existent `--rules-dir` must NOT cause the engine to lose any rules
+    /// that were already loaded — the scan continues with built-in rules only.
+    ///
+    /// Validates: Requirement 17.4 (continue with built-in rules only)
+    #[test]
+    fn test_rules_dir_nonexistent_does_not_clear_existing_rules() {
+        let temp = TempDir::new().unwrap();
+        let rules_dir = temp.path().join("valid_rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_valid_yaml_rule(&rules_dir, "rule.yaml");
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        // Pre-load a rule so the engine is non-empty.
+        let rule_path = rules_dir.join("rule.yaml");
+        eng.load_rules(&rule_path).unwrap();
+        let rules_before = eng.get_rules().len();
+        assert!(rules_before > 0, "Engine must have rules before the test");
+
+        // Now attempt to load from a non-existent path.
+        let nonexistent = temp.path().join("ghost_dir");
+        let path_str = nonexistent.to_string_lossy().to_string();
+        let (loaded, _) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert_eq!(loaded, 0);
+        assert_eq!(
+            eng.get_rules().len(),
+            rules_before,
+            "Existing rules must be preserved when rules-dir does not exist"
+        );
+    }
+
+    // ── Test 2: path exists but contains no valid YAML files ──────────────────
+
+    /// When `--rules-dir` points to an empty directory, `load_rules_from_dir`
+    /// must return 0 rules loaded and a warning message.
+    ///
+    /// Validates: Requirement 17.4 (IF … contains no valid YAML rule files …
+    /// print a warning and continue with built-in rules only)
+    #[test]
+    fn test_rules_dir_empty_directory_returns_warning() {
+        let temp = TempDir::new().unwrap();
+        let empty_dir = temp.path().join("empty_rules");
+        fs::create_dir_all(&empty_dir).unwrap();
+        let path_str = empty_dir.to_string_lossy().to_string();
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        let (loaded, warning) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert_eq!(
+            loaded, 0,
+            "No rules should be loaded from an empty directory"
+        );
+        let warning = warning.expect("A warning message must be returned for an empty rules-dir");
+        assert!(
+            warning.contains("[sicario] warning"),
+            "Warning must carry the [sicario] prefix; got: {warning}"
+        );
+        assert!(
+            warning.contains(&path_str),
+            "Warning must include the offending path; got: {warning}"
+        );
+        assert!(
+            warning.to_lowercase().contains("no valid yaml"),
+            "Warning must mention no valid YAML files; got: {warning}"
+        );
+        assert!(
+            warning.to_lowercase().contains("built-in rules only"),
+            "Warning must mention falling back to built-in rules; got: {warning}"
+        );
+    }
+
+    /// When `--rules-dir` contains only non-YAML files, `load_rules_from_dir`
+    /// must return 0 rules loaded and a warning message.
+    ///
+    /// Validates: Requirement 17.4 (no valid YAML rule files → warning + continue)
+    #[test]
+    fn test_rules_dir_no_yaml_files_returns_warning() {
+        let temp = TempDir::new().unwrap();
+        let rules_dir = temp.path().join("non_yaml_rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_non_yaml_file(&rules_dir, "readme.txt");
+        write_non_yaml_file(&rules_dir, "config.json");
+        let path_str = rules_dir.to_string_lossy().to_string();
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        let (loaded, warning) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert_eq!(loaded, 0, "Non-YAML files must not count as loaded rules");
+        let warning = warning.expect("A warning must be returned when no YAML files are present");
+        assert!(
+            warning.contains("[sicario] warning"),
+            "Warning must carry the [sicario] prefix; got: {warning}"
+        );
+        assert!(
+            warning.to_lowercase().contains("no valid yaml"),
+            "Warning must mention no valid YAML files; got: {warning}"
+        );
+    }
+
+    // ── Test 3: happy path — valid YAML files load without warning ────────────
+
+    /// When `--rules-dir` contains valid YAML rule files, `load_rules_from_dir`
+    /// must return the count of loaded rules and no warning.
+    ///
+    /// Validates: Requirement 17.3 (load rules from the specified directory)
+    #[test]
+    fn test_rules_dir_valid_yaml_loads_without_warning() {
+        let temp = TempDir::new().unwrap();
+        let rules_dir = temp.path().join("good_rules");
+        fs::create_dir_all(&rules_dir).unwrap();
+        write_valid_yaml_rule(&rules_dir, "rule.yaml");
+        let path_str = rules_dir.to_string_lossy().to_string();
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        let (loaded, warning) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert!(
+            loaded > 0,
+            "At least one rule must be loaded from a valid rules-dir"
+        );
+        assert!(
+            warning.is_none(),
+            "No warning should be emitted when valid YAML rules are present; got: {warning:?}"
+        );
+    }
+
+    // ── Test 4: quiet flag suppresses stderr output ───────────────────────────
+
+    /// The `quiet` flag must suppress the warning from being printed to stderr,
+    /// but the warning string must still be returned so callers can inspect it.
+    ///
+    /// Validates: Requirement 17.4 (warning behaviour is consistent with quiet mode)
+    #[test]
+    fn test_rules_dir_nonexistent_quiet_still_returns_warning_string() {
+        let temp = TempDir::new().unwrap();
+        let nonexistent = temp.path().join("ghost");
+        let path_str = nonexistent.to_string_lossy().to_string();
+
+        let mut eng = SastEngine::new(temp.path()).unwrap();
+        // quiet=true: no eprintln, but the warning string is still returned.
+        let (loaded, warning) = load_rules_from_dir(&path_str, &mut eng, /*quiet=*/ true);
+
+        assert_eq!(loaded, 0);
+        assert!(
+            warning.is_some(),
+            "Warning string must be returned even in quiet mode"
+        );
+    }
 }

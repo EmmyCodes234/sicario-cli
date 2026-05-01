@@ -237,6 +237,42 @@ export default defineSchema({
     updatedAt: v.string(),
   }).index("by_userId", ["userId"]),
 
+  // ── Billing ───────────────────────────────────────────────────────────────
+  subscriptions: defineTable({
+    orgId:               v.string(),
+    plan:                v.union(v.literal("free"), v.literal("pro"), v.literal("team"), v.literal("enterprise")),
+    status:              v.union(v.literal("active"), v.literal("trialing"), v.literal("past_due"), v.literal("canceled"), v.literal("paused")),
+    billingCycle:        v.union(v.literal("monthly"), v.literal("annual"), v.literal("manual")),
+    seatCount:           v.number(),
+    currentPeriodStart:  v.string(),
+    currentPeriodEnd:    v.string(),
+    whopUserId:          v.optional(v.string()),
+    whopSubscriptionId:  v.optional(v.string()),
+    trialEndsAt:         v.optional(v.string()),
+    customRetentionDays: v.optional(v.number()),
+    csmIdentifier:       v.optional(v.string()),
+    contractStartDate:   v.optional(v.string()),
+    createdAt:           v.string(),
+    updatedAt:           v.string(),
+  }).index("by_orgId", ["orgId"]),
+
+  usageSummary: defineTable({
+    orgId:          v.string(),
+    periodStart:    v.string(),
+    periodEnd:      v.string(),
+    findingsStored: v.number(),
+    projectCount:   v.number(),
+    scansSubmitted: v.number(),
+  }).index("by_orgId_periodStart", ["orgId", "periodStart"]),
+
+  auditLog: defineTable({
+    orgId:     v.string(),
+    userId:    v.optional(v.string()),
+    eventType: v.string(),
+    payload:   v.any(),
+    timestamp: v.string(),
+  }).index("by_orgId_timestamp", ["orgId", "timestamp"]),
+
   // ── Release distribution ──────────────────────────────────────────────────
   releases: defineTable({
     version: v.string(),       // e.g. "v0.1.9"

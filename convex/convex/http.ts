@@ -2,6 +2,8 @@ import { httpRouter } from "convex/server";
 import { httpAction } from "./_generated/server";
 import { auth } from "./auth";
 import { api } from "./_generated/api";
+import { checkLimits } from "./planEnforcer";
+import { PLAN_LIMITS } from "./billing";
 const http = httpRouter();
 
 // ── Auth routes from @convex-dev/auth ────────────────────────────────────────
@@ -367,6 +369,30 @@ http.route({
         );
       }
 
+      // 8.5. Plan enforcement — check limits before accepting the payload
+      const isNewProject = !matchedProject;
+      const limitCheck = await checkLimits(ctx, orgId!, findings.length, isNewProject);
+      if (!limitCheck.allowed) {
+        const errorMsg = limitCheck.reason === "findings"
+          ? "Finding storage limit reached. Upgrade your plan at usesicario.xyz/pricing"
+          : "Project limit reached. Upgrade your plan at usesicario.xyz/pricing";
+
+        await ctx.runMutation(api.billing.appendAuditLog, {
+          orgId: orgId!,
+          eventType: "plan_enforcer.rejected",
+          payload: {
+            endpoint: "/api/v1/telemetry/scan",
+            rejectionReason: limitCheck.reason,
+            limitExceeded: limitCheck.reason,
+          },
+        });
+
+        return new Response(
+          JSON.stringify({ error: errorMsg }),
+          { status: 402, headers: { "Content-Type": "application/json", ...corsHeaders() } },
+        );
+      }
+
       // 9. Enforce executionTrace array cap (max 20 items, each string max 250 chars with truncation marker)
       const MAX_EXECUTION_TRACE_ITEMS = 20;
       const MAX_EXECUTION_TRACE_STRING_LENGTH = 250;
@@ -432,6 +458,56 @@ http.route({
         orgId: orgId!,
         projectId: body.projectId,
       });
+
+      // 10.5. Update usage summary
+      const now2 = new Date();
+      const periodStart = new Date(now2.getFullYear(), now2.getMonth(), 1).toISOString();
+      const periodEnd   = new Date(now2.getFullYear(), now2.getMonth() + 1, 0, 23, 59, 59, 999).toISOString();
+
+      await ctx.runMutation(api.billing.upsertUsageSummary, {
+        orgId: orgId!,
+        periodStart,
+        periodEnd,
+        delta: {
+          findingsStored: findings.length,
+          projectCount:   isNewProject ? 1 : 0,
+          scansSubmitted: 1,
+        },
+      });
+
+      // 10.6. Check 80% threshold and fire webhook warning if needed
+      const sub = await ctx.runQuery(api.billing.getSubscription, { orgId: orgId! });
+      if (sub) {
+        const effectivePlan = sub.status === "past_due" ? "free" : sub.plan;
+        const planLimit = PLAN_LIMITS[effectivePlan as keyof typeof PLAN_LIMITS].findings;
+        if (planLimit !== Infinity) {
+          const updatedUsage = await ctx.runQuery(api.billing.getUsageSummary, { orgId: orgId!, periodStart });
+          const currentFindings = updatedUsage?.findingsStored ?? 0;
+          if (currentFindings / planLimit >= 0.80) {
+            // Fire webhook warning if org has a configured webhook
+            try {
+              const webhooks: any[] = await ctx.runQuery(api.webhooks.listByOrg, { orgId: orgId! });
+              for (const wh of webhooks) {
+                if (wh.enabled) {
+                  await fetch(wh.url, {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      event: "usage.findings_warning",
+                      orgId: orgId!,
+                      findingsStored: currentFindings,
+                      planLimit,
+                      percentUsed: Math.round((currentFindings / planLimit) * 100),
+                    }),
+                  });
+                }
+              }
+            } catch {
+              // Webhook delivery failure is non-fatal
+            }
+          }
+        }
+      }
 
       // 11. If prNumber is present, create or update a prChecks record
       if (body.prNumber !== undefined && body.prNumber !== null) {
@@ -834,6 +910,171 @@ http.route({
         "Access-Control-Allow-Methods": "GET, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type",
       },
+    });
+  }),
+});
+
+// ── POST /whop-webhook — Handle Whop membership lifecycle events ─────────────
+//
+// Whop fires two events we care about:
+//   membership_activated   → activate / upgrade the org's subscription
+//   membership_deactivated → cancel / downgrade to free
+//
+// Signature verification: HMAC-SHA256 over the raw request body using
+// WHOP_WEBHOOK_SECRET, compared against the x-whop-signature header.
+http.route({
+  path: "/whop-webhook",
+  method: "POST",
+  handler: httpAction(async (ctx, request) => {
+    // 1. Read raw body first (needed for HMAC verification before JSON parse)
+    const rawBody = await request.arrayBuffer();
+    const bodyText = new TextDecoder().decode(rawBody);
+
+    // 2. Verify x-whop-signature
+    const secret = process.env.WHOP_WEBHOOK_SECRET ?? "";
+    const sigHeader = request.headers.get("x-whop-signature") ?? "";
+
+    if (!secret) {
+      console.error("WHOP_WEBHOOK_SECRET is not set — rejecting webhook");
+      return new Response(JSON.stringify({ error: "Webhook secret not configured" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // Compute HMAC-SHA256
+    const encoder = new TextEncoder();
+    const keyData = encoder.encode(secret);
+    const msgData = encoder.encode(bodyText);
+    const cryptoKey = await crypto.subtle.importKey(
+      "raw", keyData, { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sigBytes = await crypto.subtle.sign("HMAC", cryptoKey, msgData);
+    const sigHex = Array.from(new Uint8Array(sigBytes))
+      .map((b) => b.toString(16).padStart(2, "0"))
+      .join("");
+
+    // Whop sends the signature as a plain hex string
+    if (sigHex !== sigHeader) {
+      console.warn("Whop webhook signature mismatch — rejecting");
+      return new Response(JSON.stringify({ error: "Invalid signature" }), {
+        status: 401,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 3. Parse JSON
+    let body: any;
+    try {
+      body = JSON.parse(bodyText);
+    } catch {
+      return new Response(JSON.stringify({ error: "Invalid JSON" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 4. Extract event action and orgId from custom_req
+    const action: string = body.action ?? "";
+    const orgId: string  = body.data?.metadata?.custom_req ?? body.metadata?.custom_req ?? "";
+
+    if (!orgId) {
+      console.warn("Whop webhook missing custom_req — logging and returning 400", { action, body });
+      await ctx.runMutation(api.billing.appendAuditLog, {
+        orgId:     "unknown",
+        eventType: "whop_webhook.malformed",
+        payload:   { action, reason: "missing custom_req", rawBody: bodyText.slice(0, 500) },
+      });
+      return new Response(JSON.stringify({ error: "Missing custom_req in payload" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 5. Verify the org exists
+    const sub = await ctx.runQuery(api.billing.getSubscription, { orgId });
+    if (!sub) {
+      console.warn(`Whop webhook: no subscription found for orgId=${orgId}`);
+      await ctx.runMutation(api.billing.appendAuditLog, {
+        orgId,
+        eventType: "whop_webhook.malformed",
+        payload:   { action, reason: "unknown orgId" },
+      });
+      return new Response(JSON.stringify({ error: "Unknown orgId" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json" },
+      });
+    }
+
+    // 6. Handle the two supported actions
+    if (action === "membership_activated") {
+      // Resolve plan from Whop product ID
+      const productId: string = body.data?.product_id ?? body.product_id ?? "";
+
+      const WHOP_PRODUCT_PLAN_MAP: Record<string, "pro" | "team" | "enterprise"> = {
+        plan_SoglPJunMJuAy: "team",
+        plan_oPf5dQyS4Z4xy: "pro",
+      };
+      const resolvedPlan = WHOP_PRODUCT_PLAN_MAP[productId] ?? "pro";
+
+      const previousPlan = sub.plan;
+      const whopUserId         = body.data?.user_id         ?? body.user_id         ?? undefined;
+      const whopSubscriptionId = body.data?.id              ?? body.id              ?? undefined;
+
+      await ctx.runMutation(api.billing.updateSubscription, {
+        orgId,
+        plan:               resolvedPlan,
+        status:             "active",
+        billingCycle:       "monthly",
+        whopUserId,
+        whopSubscriptionId,
+      });
+
+      await ctx.runMutation(api.billing.appendAuditLog, {
+        orgId,
+        eventType: "subscription.upgraded",
+        payload:   {
+          previousPlan,
+          newPlan:       resolvedPlan,
+          triggerSource: "whop_webhook",
+          whopEventId:   body.id ?? undefined,
+          productId,
+        },
+      });
+
+      console.log(`Whop: activated ${resolvedPlan} for org ${orgId}`);
+
+    } else if (action === "membership_deactivated") {
+      const previousPlan = sub.plan;
+
+      await ctx.runMutation(api.billing.updateSubscription, {
+        orgId,
+        plan:   "free",
+        status: "canceled",
+      });
+
+      await ctx.runMutation(api.billing.appendAuditLog, {
+        orgId,
+        eventType: "subscription.canceled",
+        payload:   {
+          previousPlan,
+          newPlan:       "free",
+          triggerSource: "whop_webhook",
+          whopEventId:   body.id ?? undefined,
+        },
+      });
+
+      console.log(`Whop: deactivated — downgraded org ${orgId} to free`);
+
+    } else {
+      // Unknown action — log and acknowledge (don't return 4xx or Whop will retry)
+      console.log(`Whop webhook: unhandled action '${action}' for org ${orgId} — ignoring`);
+    }
+
+    // 7. Always return 200 to prevent Whop retries
+    return new Response(JSON.stringify({ received: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" },
     });
   }),
 });

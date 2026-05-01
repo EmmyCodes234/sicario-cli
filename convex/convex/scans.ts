@@ -241,6 +241,8 @@ export const list = query({
     repository: v.optional(v.string()),
     branch: v.optional(v.string()),
     orgId: v.optional(v.string()),
+    startDate: v.optional(v.string()),
+    endDate: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const page = args.page ?? 1;
@@ -261,6 +263,8 @@ export const list = query({
     const filtered = allScans.filter((s) => {
       if (args.repository && s.repository !== args.repository) return false;
       if (args.branch && s.branch !== args.branch) return false;
+      if (args.startDate && s.timestamp < args.startDate) return false;
+      if (args.endDate && s.timestamp > args.endDate) return false;
       return true;
     });
 

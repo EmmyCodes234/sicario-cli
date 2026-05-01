@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use super::backup_manager::{BackupManager, PatchHistoryEntry};
 use super::llm_client::LlmClient;
 use super::template_engine::TemplateRegistry;
-use super::{FixContext, Patch};
+use super::{AiFallbackDecision, FixContext, Patch};
 use crate::engine::Vulnerability;
 use crate::parser::{Language as ParserLanguage, TreeSitterEngine};
 
@@ -55,6 +55,12 @@ pub struct RemediationEngine {
     backup_manager: BackupManager,
     /// Pre-built registry of deterministic templates — checked before the LLM.
     registry: TemplateRegistry,
+    /// Whether AI fallback is pre-approved (--allow-ai flag).
+    ///
+    /// When `false` (default), the guardrail fires and prompts the user for
+    /// consent before any LLM call. When `true`, the LLM call proceeds
+    /// immediately with a one-line notice (CI mode).
+    allow_ai: bool,
 }
 
 impl RemediationEngine {
@@ -65,6 +71,21 @@ impl RemediationEngine {
             ai_client: LlmClient::new()?,
             backup_manager: BackupManager::new(project_root)?,
             registry: TemplateRegistry::default(),
+            allow_ai: false,
+        })
+    }
+
+    /// Create a new `RemediationEngine` with the `--allow-ai` flag set.
+    ///
+    /// When `allow_ai` is `true`, the AI fallback guardrail is bypassed and
+    /// a one-line notice is printed before each LLM call instead of prompting.
+    pub fn new_with_allow_ai(project_root: &Path, allow_ai: bool) -> Result<Self> {
+        Ok(Self {
+            tree_sitter: TreeSitterEngine::new(project_root)?,
+            ai_client: LlmClient::new()?,
+            backup_manager: BackupManager::new(project_root)?,
+            registry: TemplateRegistry::default(),
+            allow_ai,
         })
     }
 
@@ -97,15 +118,37 @@ impl RemediationEngine {
             if let Some(fixed) = self.try_registry_fix(vulnerability, &original_content) {
                 fixed
             } else {
-                // ── Step 2: LLM verification loop (up to 3 attempts) ─────────────
-                match self.remediate_with_retries(vulnerability, &original_content, 3) {
-                    Ok(content) => content,
-                    // ── Step 3: Classification-based template fallback ────────────
-                    Err(_) => super::templates::apply_template_fix_with_registry(
+                // ── Guardrail: check AI fallback consent before any LLM call ─────
+                // Per Requirement 5.2: Sicario must never silently send code to an
+                // LLM. When no deterministic template is found, halt and require
+                // explicit user consent (or --allow-ai for CI use).
+                let file_str = file_path.to_str().unwrap_or("<unknown>");
+                let decision = super::check_ai_fallback_consent(
+                    &vulnerability.rule_id,
+                    file_str,
+                    vulnerability.line,
+                    self.allow_ai,
+                );
+
+                if decision == AiFallbackDecision::Declined {
+                    // User declined — fall back to classification-based template
+                    // (deterministic, no LLM) so we still produce a useful patch.
+                    super::templates::apply_template_fix_with_registry(
                         &original_content,
                         vulnerability,
                         &self.registry,
-                    ),
+                    )
+                } else {
+                    // ── Step 2: LLM verification loop (up to 3 attempts) ─────────────
+                    match self.remediate_with_retries(vulnerability, &original_content, 3) {
+                        Ok(content) => content,
+                        // ── Step 3: Classification-based template fallback ────────────
+                        Err(_) => super::templates::apply_template_fix_with_registry(
+                            &original_content,
+                            vulnerability,
+                            &self.registry,
+                        ),
+                    }
                 }
             };
 
@@ -197,7 +240,7 @@ impl RemediationEngine {
             ) {
                 Ok(r) => {
                     spinner.finish_success("LLM responded");
-                    r
+                    r.text
                 }
                 Err(e) => {
                     let msg = e.to_string();

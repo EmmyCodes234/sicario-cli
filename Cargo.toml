@@ -3,10 +3,10 @@ members = ["sicario-cli"]
 resolver = "2"
 
 [workspace.package]
-version = "0.1.9"
+version = "0.2.0"
 edition = "2021"
 authors = ["Sicario Team"]
-license = "MIT"
+license = "FSL-1.1"
 repository = "https://github.com/sicario-labs/sicario-cli"
 
 [workspace.dependencies]
@@ -124,6 +124,13 @@ sysinfo = "0.30"
 
 # Diagnostic output
 miette = { version = "7", features = ["fancy"] }
+
+# File system watching (for --watch mode)
+notify = { version = "6", features = ["macos_fsevent"] }
+notify-debouncer-mini = "0.4"
+
+# Signal handling (for Ctrl+C in --watch mode)
+ctrlc = { version = "3.4", features = ["termination"] }
 
 # Config for 'cargo dist'
 [workspace.metadata.dist]

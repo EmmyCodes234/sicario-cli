@@ -26,6 +26,19 @@ export const create = mutation({
       await requireRole(ctx, args.userId, args.orgId, "admin");
     }
 
+    // Enforce plan gate — webhooks require pro or above
+    if (args.orgId) {
+      const subscription = await ctx.db
+        .query("subscriptions")
+        .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId!))
+        .first();
+      const plan = subscription?.plan ?? "free";
+      const PLAN_RANK: Record<string, number> = { free: 0, pro: 1, team: 2, enterprise: 3 };
+      if ((PLAN_RANK[plan] ?? 0) < PLAN_RANK["pro"]) {
+        throw new Error("Webhooks require a Pro plan or above. Upgrade at usesicario.xyz/pricing");
+      }
+    }
+
     const now = new Date().toISOString();
     await ctx.db.insert("webhooks", {
       webhookId: args.id,

@@ -17,7 +17,7 @@
     <img src="https://img.shields.io/github/v/release/sicario-labs/sicario-cli?style=flat-square&color=white&label=Release" alt="Latest Release" />
   </a>
   <a href="LICENSE">
-    <img src="https://img.shields.io/badge/License-MIT-blue.svg?style=flat-square" alt="MIT License" />
+    <img src="https://img.shields.io/badge/License-FSL--1.1-orange.svg?style=flat-square" alt="FSL-1.1 License" />
   </a>
   <img src="https://img.shields.io/badge/Engine-Rust_1.75+-orange?style=flat-square&logo=rust" alt="Built with Rust" />
 </p>
@@ -325,6 +325,18 @@ See [CONTRIBUTING.md](CONTRIBUTING.md). All contributions are welcome — new ru
 
 Found a vulnerability? See [SECURITY.md](SECURITY.md). Please do not open a public issue.
 
-## License
+## License & Enterprise Use
 
-[MIT](LICENSE) — © Sicario Labs
+Sicario is governed by the [Functional Source License 1.1](LICENSE) (FSL-1.1), with Apache License 2.0 as the Change License.
+
+**Free for:**
+- Individual developers using Sicario locally or in personal CI/CD pipelines
+- Open-source projects and non-profit organizations
+- Commercial teams using Sicario for internal security scanning of their own code
+
+**Requires a commercial agreement:**
+- Running Sicario as a hosted security scanning service for third parties (scanning code you don't own on behalf of paying customers)
+
+FSL-1.1 is source-available — you can read, audit, fork, and contribute to the code. Two years after each version's first public release, that version automatically converts to the Apache License 2.0, making it fully open source.
+
+For commercial licensing inquiries, see [COMMERCIAL_LICENSE.md](COMMERCIAL_LICENSE.md) or contact the team via [usesicario.xyz](https://usesicario.xyz).

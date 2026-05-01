@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use super::FixContext;
 use crate::key_manager;
+use crate::key_manager::AuthStyle;
 
 // ── OpenAI-compatible request/response types ──────────────────────────────────
 
@@ -46,8 +47,68 @@ struct ChatMessageResponse {
 }
 
 #[derive(Debug, Deserialize)]
+struct ChatUsage {
+    #[serde(default)]
+    total_tokens: u32,
+    #[serde(default)]
+    prompt_tokens: u32,
+    #[serde(default)]
+    completion_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
 struct ChatResponse {
     choices: Vec<ChatChoice>,
+    #[serde(default)]
+    usage: Option<ChatUsage>,
+}
+
+// ── Anthropic Messages API types ──────────────────────────────────────────────
+
+#[derive(Debug, Serialize)]
+struct AnthropicRequest {
+    model: String,
+    max_tokens: u32,
+    system: String,
+    messages: Vec<AnthropicMessage>,
+}
+
+#[derive(Debug, Serialize)]
+struct AnthropicMessage {
+    role: String,
+    content: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicContent {
+    #[serde(rename = "type")]
+    content_type: String,
+    text: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicUsage {
+    #[serde(default)]
+    input_tokens: u32,
+    #[serde(default)]
+    output_tokens: u32,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicResponse {
+    content: Vec<AnthropicContent>,
+    #[serde(default)]
+    usage: Option<AnthropicUsage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicErrorBody {
+    error: AnthropicErrorDetail,
+}
+
+#[derive(Debug, Deserialize)]
+struct AnthropicErrorDetail {
+    message: String,
 }
 
 // ── System prompt (XML protocol) ──────────────────────────────────────────────
@@ -89,6 +150,15 @@ pub struct LlmConfig {
     pub has_key: bool,
 }
 
+/// Result of an LLM completion, including the generated text and token usage.
+#[derive(Debug, Clone)]
+pub struct LlmResponse {
+    /// The generated text content.
+    pub text: String,
+    /// Total tokens consumed (input + output), if reported by the API.
+    pub total_tokens: u32,
+}
+
 /// Provider-agnostic LLM client that speaks the OpenAI chat completions protocol.
 ///
 /// Works with any provider that exposes a `/v1/chat/completions` endpoint:
@@ -98,6 +168,7 @@ pub struct LlmClient {
     endpoint: String,
     model: String,
     key_source: key_manager::KeySource,
+    auth_style: Option<AuthStyle>,
     client: Client,
 }
 
@@ -117,20 +188,45 @@ impl LlmClient {
     /// for authenticating HTTP requests to the Convex telemetry endpoint.
     pub fn new() -> Result<Self> {
         let resolved = key_manager::resolve_api_key();
-        let (api_key, key_source) = match resolved {
-            Some(r) => (Some(r.key), r.source),
-            None => {
-                // Fallback: check ~/.sicario/config.toml for BYOK LLM keys
-                if let Some(llm_res) = crate::config::resolve_llm_api_key() {
-                    (Some(llm_res.key), key_manager::KeySource::ConfigFile)
-                } else {
-                    (None, key_manager::KeySource::None)
+        let (api_key, key_source, endpoint_override, auth_style_override, model_override) =
+            match resolved {
+                Some(r) => (
+                    Some(r.key),
+                    r.source,
+                    r.resolved_endpoint_override,
+                    r.auth_style,
+                    r.model_override,
+                ),
+                None => {
+                    // Fallback: check ~/.sicario/config.toml for BYOK LLM keys
+                    if let Some(llm_res) = crate::config::resolve_llm_api_key() {
+                        (
+                            Some(llm_res.key),
+                            key_manager::KeySource::ConfigFile,
+                            None,
+                            None,
+                            None,
+                        )
+                    } else {
+                        (None, key_manager::KeySource::None, None, None, None)
+                    }
                 }
-            }
-        };
+            };
 
-        let endpoint = key_manager::resolve_endpoint();
-        let model = key_manager::resolve_model();
+        // Use endpoint override from key resolution (e.g. Ollama/LM Studio auto-detect,
+        // provider-specific env vars), falling back to the standard resolution chain.
+        let endpoint = endpoint_override.unwrap_or_else(key_manager::resolve_endpoint);
+
+        // Use model override from key resolution (e.g. Ollama/LM Studio auto-detected model),
+        // falling back to the standard resolution chain.
+        let model = model_override.unwrap_or_else(key_manager::resolve_model);
+
+        // If auth_style is None (local model), treat the key as empty so no
+        // Authorization header is sent.
+        let effective_api_key = match auth_style_override {
+            Some(key_manager::AuthStyle::None) => None,
+            _ => api_key,
+        };
 
         let client = Client::builder()
             .timeout(Duration::from_secs(30))
@@ -138,10 +234,11 @@ impl LlmClient {
             .context("Failed to build HTTP client")?;
 
         Ok(Self {
-            api_key,
+            api_key: effective_api_key,
             endpoint,
             model,
             key_source,
+            auth_style: auth_style_override,
             client,
         })
     }
@@ -158,8 +255,8 @@ impl LlmClient {
 
     /// Generate a security fix using the XML protocol.
     ///
-    /// Returns the raw LLM response string. Callers must call
-    /// `extract_patch()` to pull the code out of `<sicario_patch>` tags.
+    /// Returns an `LlmResponse` containing the raw text and token usage.
+    /// Callers must call `extract_patch()` to pull the code out of `<sicario_patch>` tags.
     ///
     /// Accepts an optional `extra_context` string that is appended to the
     /// user prompt — used by the retry loop to feed back syntax/security
@@ -168,7 +265,7 @@ impl LlmClient {
         &self,
         context: &FixContext,
         extra_context: Option<&str>,
-    ) -> Result<String> {
+    ) -> Result<LlmResponse> {
         let api_key = self.api_key.as_deref().ok_or_else(|| {
             anyhow!(
                 "No LLM API key configured.\n\n\
@@ -187,6 +284,19 @@ impl LlmClient {
         })?;
 
         let user_prompt = build_user_prompt(context, extra_context);
+
+        // Dispatch: if the resolved key source is Anthropic, use the native Anthropic client
+        let use_anthropic = matches!(self.key_source, key_manager::KeySource::EnvAnthropic)
+            || self.endpoint.contains("api.anthropic.com");
+
+        if use_anthropic {
+            return self.generate_fix_anthropic(api_key, &user_prompt).await;
+        }
+
+        // Dispatch: Azure OpenAI uses `api-key` header (not `Authorization: Bearer`)
+        let use_azure = matches!(self.auth_style, Some(AuthStyle::AzureApiKey))
+            || matches!(self.key_source, key_manager::KeySource::EnvAzure)
+            || self.endpoint.contains("openai.azure.com");
 
         let request = ChatRequest {
             model: self.model.clone(),
@@ -207,9 +317,13 @@ impl LlmClient {
         let mut req_builder = self.client.post(&self.endpoint).json(&request);
 
         if !api_key.is_empty() {
-            req_builder = req_builder.bearer_auth(api_key);
+            if use_azure {
+                // Azure OpenAI authenticates with `api-key` header, not `Authorization: Bearer`
+                req_builder = req_builder.header("api-key", api_key);
+            } else {
+                req_builder = req_builder.bearer_auth(api_key);
+            }
         }
-
         let response = req_builder
             .send()
             .await
@@ -231,21 +345,105 @@ impl LlmClient {
             .await
             .context("Failed to parse LLM API response")?;
 
-        chat_response
+        let text = chat_response
             .choices
             .into_iter()
             .next()
             .map(|c| c.message.content.trim().to_string())
-            .ok_or_else(|| anyhow!("LLM API returned no choices"))
+            .ok_or_else(|| anyhow!("LLM API returned no choices"))?;
+
+        let total_tokens = chat_response
+            .usage
+            .map(|u| {
+                if u.total_tokens > 0 {
+                    u.total_tokens
+                } else {
+                    u.prompt_tokens + u.completion_tokens
+                }
+            })
+            .unwrap_or(0);
+
+        Ok(LlmResponse { text, total_tokens })
+    }
+
+    /// Send a request to the native Anthropic Messages API.
+    ///
+    /// - POST `https://api.anthropic.com/v1/messages`
+    /// - Headers: `anthropic-version: 2023-06-01`, `x-api-key: <key>`
+    async fn generate_fix_anthropic(
+        &self,
+        api_key: &str,
+        user_prompt: &str,
+    ) -> Result<LlmResponse> {
+        let endpoint = if self.endpoint.contains("/messages") {
+            self.endpoint.clone()
+        } else {
+            "https://api.anthropic.com/v1/messages".to_string()
+        };
+
+        let request = AnthropicRequest {
+            model: self.model.clone(),
+            max_tokens: 4096,
+            system: SECURITY_FIX_SYSTEM_PROMPT.to_string(),
+            messages: vec![AnthropicMessage {
+                role: "user".to_string(),
+                content: user_prompt.to_string(),
+            }],
+        };
+
+        let response = self
+            .client
+            .post(&endpoint)
+            .header("anthropic-version", "2023-06-01")
+            .header("x-api-key", api_key)
+            .json(&request)
+            .send()
+            .await
+            .context("Failed to send request to Anthropic API")?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            // Try to extract structured error message
+            let error_msg = serde_json::from_str::<AnthropicErrorBody>(&body)
+                .map(|e| e.error.message)
+                .unwrap_or(body);
+            return Err(anyhow!(
+                "Anthropic API returned error {}: {}",
+                status,
+                error_msg
+            ));
+        }
+
+        let anthropic_response: AnthropicResponse = response
+            .json()
+            .await
+            .context("Failed to parse Anthropic API response")?;
+
+        let total_tokens = anthropic_response
+            .usage
+            .as_ref()
+            .map(|u| u.input_tokens + u.output_tokens)
+            .unwrap_or(0);
+
+        let text = anthropic_response
+            .content
+            .into_iter()
+            .find(|c| c.content_type == "text")
+            .and_then(|c| c.text)
+            .map(|t| t.trim().to_string())
+            .ok_or_else(|| anyhow!("Anthropic API returned no text content"))?;
+
+        Ok(LlmResponse { text, total_tokens })
     }
 
     /// Legacy method kept for backward compatibility with existing tests.
     /// New code should use `generate_fix_xml` + `extract_patch`.
     pub async fn generate_fix(&self, context: &FixContext) -> Result<String> {
-        let raw = self.generate_fix_xml(context, None).await?;
+        let resp = self.generate_fix_xml(context, None).await?;
         // Try to extract a patch; fall back to the raw response so old callers
         // still get something usable.
-        Ok(extract_patch(&raw).unwrap_or(raw))
+        Ok(extract_patch(&resp.text).unwrap_or(resp.text))
     }
 }
 
@@ -497,6 +695,7 @@ mod tests {
             endpoint: "https://example.com".to_string(),
             model: "test".to_string(),
             key_source: key_manager::KeySource::None,
+            auth_style: None,
             client: Client::new(),
         };
 
@@ -506,7 +705,6 @@ mod tests {
         let err_msg = result.unwrap_err().to_string();
         assert!(err_msg.contains("No LLM API key configured"));
     }
-
     #[test]
     fn test_default_endpoint_is_openai() {
         std::env::remove_var("SICARIO_LLM_ENDPOINT");
@@ -522,5 +720,58 @@ mod tests {
         std::env::remove_var("CEREBRAS_MODEL");
         let model = key_manager::resolve_model();
         assert_eq!(model, "gpt-4o-mini");
+    }
+
+    // ── Anthropic response parsing tests ─────────────────────────────────────
+
+    #[test]
+    fn test_anthropic_response_parse_success() {
+        let json = r#"{
+            "id": "msg_01",
+            "type": "message",
+            "role": "assistant",
+            "content": [
+                {"type": "text", "text": "<scratchpad>analysis</scratchpad>\n<sicario_patch>\nconst safe = escape(input);\n</sicario_patch>"}
+            ],
+            "model": "claude-opus-4-5",
+            "stop_reason": "end_turn",
+            "usage": {"input_tokens": 10, "output_tokens": 20}
+        }"#;
+
+        let parsed: AnthropicResponse = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.content.len(), 1);
+        assert_eq!(parsed.content[0].content_type, "text");
+        let text = parsed.content[0].text.as_deref().unwrap();
+        assert!(text.contains("<sicario_patch>"));
+        // Verify usage is captured
+        let usage = parsed.usage.as_ref().unwrap();
+        assert_eq!(usage.input_tokens, 10);
+        assert_eq!(usage.output_tokens, 20);
+    }
+
+    #[test]
+    fn test_anthropic_error_parse() {
+        let json = r#"{"error": {"type": "authentication_error", "message": "Invalid API key"}}"#;
+        let parsed: AnthropicErrorBody = serde_json::from_str(json).unwrap();
+        assert_eq!(parsed.error.message, "Invalid API key");
+    }
+
+    #[test]
+    fn test_anthropic_response_extract_patch() {
+        let raw = "<scratchpad>fix</scratchpad>\n<sicario_patch>\nconst safe = escape(input);\n</sicario_patch>";
+        let patch = extract_patch(raw).unwrap();
+        assert_eq!(patch, "const safe = escape(input);");
+    }
+
+    #[test]
+    fn test_anthropic_response_no_text_content() {
+        let json = r#"{"content": [{"type": "tool_use", "id": "tool_1"}]}"#;
+        let parsed: AnthropicResponse = serde_json::from_str(json).unwrap();
+        let text = parsed
+            .content
+            .into_iter()
+            .find(|c| c.content_type == "text")
+            .and_then(|c| c.text);
+        assert!(text.is_none());
     }
 }

@@ -103,6 +103,13 @@ sysinfo.workspace = true
 # Diagnostic output
 miette.workspace = true
 
+# File system watching (for --watch mode)
+notify.workspace = true
+notify-debouncer-mini.workspace = true
+
+# Signal handling (for Ctrl+C in --watch mode)
+ctrlc.workspace = true
+
 # Temp files (rule test harness)
 tempfile.workspace = true
 

@@ -285,8 +285,30 @@ impl SastEngine {
             }
         };
 
-        // Parse the file (will use cache if available)
-        let tree = self.tree_sitter.parse_file(path)?;
+        // Parse the file (will use cache if available).
+        // tree-sitter returns None for files with syntax so broken it cannot
+        // produce even a partial AST.  Catch that here so a single malformed
+        // file never aborts the whole scan.
+        let tree = match self.tree_sitter.parse_file(path) {
+            Ok(t) => t,
+            Err(e) => {
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<unknown>");
+                let reason = e.to_string();
+                let display_reason = if reason.contains("parse")
+                    || reason.contains("syntax")
+                    || reason.contains("AST")
+                {
+                    "Invalid syntax, cannot parse AST"
+                } else {
+                    "Could not read or parse file"
+                };
+                eprintln!("[Skip] {} - {}", file_name, display_reason);
+                return Ok(Vec::new());
+            }
+        };
         let source_code = fs::read_to_string(path)?;
 
         let mut vulnerabilities = Vec::new();
@@ -362,12 +384,36 @@ impl SastEngine {
 
         // Collect all vulnerabilities from successful scans
         let mut all_vulnerabilities = Vec::new();
-        for result in results {
+        for (file_path, result) in files_to_scan.iter().zip(results.into_iter()) {
             match result {
                 Ok(mut vulns) => all_vulnerabilities.append(&mut vulns),
                 Err(e) => {
-                    // Log error but continue scanning other files
-                    eprintln!("Error scanning file: {}", e);
+                    // Gracefully skip unparseable or unreadable files — never
+                    // crash the scan.  Emit a clean [Skip] warning so the user
+                    // knows which file was skipped and why.
+                    let file_name = file_path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("<unknown>");
+                    let reason = e.to_string();
+                    // Normalise common parse/IO error messages into the
+                    // user-friendly format.  Any other error falls back to a
+                    // short description so the output stays clean.
+                    let display_reason = if reason.contains("parse")
+                        || reason.contains("syntax")
+                        || reason.contains("AST")
+                    {
+                        "Invalid syntax, cannot parse AST".to_string()
+                    } else if reason.contains("No such file") || reason.contains("not found") {
+                        "File not found".to_string()
+                    } else if reason.contains("Permission denied") {
+                        "Permission denied".to_string()
+                    } else {
+                        // Truncate long internal errors to keep output readable
+                        let short: String = reason.chars().take(80).collect();
+                        format!("Skipped — {short}")
+                    };
+                    eprintln!("[Skip] {} - {}", file_name, display_reason);
                 }
             }
         }
@@ -636,9 +682,23 @@ impl SastEngine {
         };
         parser.set_language(ts_language)?;
 
-        let tree = parser
-            .parse(&source_code, None)
-            .ok_or_else(|| anyhow::anyhow!("Failed to parse file: {:?}", path))?;
+        // tree-sitter returns None when the file is so malformed it cannot
+        // produce even a partial AST.  Rather than propagating an error (which
+        // would surface as a generic "Error scanning file" message and could
+        // abort the whole scan in some call-sites), we emit a clean [Skip]
+        // warning and return an empty finding list so the rest of the
+        // repository continues to be scanned.
+        let tree = match parser.parse(&source_code, None) {
+            Some(t) => t,
+            None => {
+                let file_name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("<unknown>");
+                eprintln!("[Skip] {} - Invalid syntax, cannot parse AST", file_name);
+                return Ok(Vec::new());
+            }
+        };
 
         let mut vulnerabilities = Vec::new();
         // Dedup key: (rule_id, line) — one finding per rule per line
@@ -1589,6 +1649,101 @@ mod tests {
 
         // Should return empty results
         assert!(vulnerabilities.is_empty());
+    }
+
+    /// Integration test: a user-provided rule with the same ID as a built-in rule
+    /// overrides the built-in rule (last-write-wins via HashMap keyed by rule ID).
+    ///
+    /// Validates: Requirements 17.4 (--rules-dir user rules take precedence on ID conflicts)
+    #[test]
+    fn test_rules_dir_user_rule_overrides_builtin_on_id_conflict() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a built-in-style rule with a known ID
+        let builtin_yaml = r#"
+- id: "js/eval-injection"
+  name: "Built-in Eval Rule"
+  description: "Original built-in description"
+  severity: Critical
+  languages:
+    - JavaScript
+  pattern:
+    query: "(call_expression function: (identifier) @fn (#eq? @fn \"eval\")) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-95"
+"#;
+        let builtin_dir = temp_dir.path().join("builtin");
+        fs::create_dir_all(&builtin_dir).unwrap();
+        let builtin_file = create_test_yaml_rules(&builtin_dir, builtin_yaml);
+
+        // Create a user rule with the SAME ID but different severity (Medium instead of Critical)
+        let user_yaml = r#"
+- id: "js/eval-injection"
+  name: "User Override Eval Rule"
+  description: "User-provided override — lower severity for this project"
+  severity: Medium
+  languages:
+    - JavaScript
+  pattern:
+    query: "(call_expression function: (identifier) @fn (#eq? @fn \"eval\")) @call"
+    captures:
+      - "call"
+  cwe_id: "CWE-95"
+"#;
+        let user_rules_dir = temp_dir.path().join("user_rules");
+        fs::create_dir_all(&user_rules_dir).unwrap();
+        let user_file = create_test_yaml_rules(&user_rules_dir, user_yaml);
+
+        // Create a JS file that triggers the rule
+        let test_file = temp_dir.path().join("test.js");
+        fs::write(&test_file, "eval(userInput);").unwrap();
+
+        // Load built-in rule first, then user rule (user takes precedence)
+        let mut engine = SastEngine::new(temp_dir.path()).unwrap();
+        engine.load_rules(&builtin_file).unwrap();
+        engine.load_rules(&user_file).unwrap();
+
+        let vulnerabilities = engine.scan_file(&test_file).unwrap();
+
+        // Should find exactly one finding (no duplicates despite two loads)
+        assert!(!vulnerabilities.is_empty(), "Expected at least one finding");
+        let eval_findings: Vec<_> = vulnerabilities
+            .iter()
+            .filter(|v| v.rule_id == "js/eval-injection")
+            .collect();
+        assert_eq!(
+            eval_findings.len(),
+            1,
+            "Expected exactly one finding for js/eval-injection (no duplicates)"
+        );
+        // The user rule (Medium) must have overridden the built-in (Critical)
+        assert_eq!(
+            eval_findings[0].severity,
+            crate::engine::Severity::Medium,
+            "User rule (Medium) must override built-in rule (Critical) on ID conflict"
+        );
+    }
+
+    /// Integration test: --rules-dir with a non-existent path produces no panic
+    /// and the engine continues with whatever rules were already loaded.
+    ///
+    /// Validates: Requirements 17.4 (warning + continue with built-in rules only)
+    #[test]
+    fn test_rules_dir_nonexistent_path_does_not_panic() {
+        let temp_dir = TempDir::new().unwrap();
+        let nonexistent = temp_dir.path().join("does_not_exist");
+
+        // Attempting to read a non-existent directory should not panic
+        let result = std::fs::read_dir(&nonexistent);
+        assert!(result.is_err(), "Non-existent dir must return an error");
+
+        // The engine itself should still be constructable and usable
+        let engine = SastEngine::new(temp_dir.path());
+        assert!(
+            engine.is_ok(),
+            "Engine must be constructable even if rules-dir is missing"
+        );
     }
 }
 

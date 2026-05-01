@@ -14,6 +14,9 @@ pub mod rules;
 pub mod scan;
 pub mod suppressions;
 
+#[cfg(test)]
+pub mod watch_integration_tests;
+
 use clap::{Parser, Subcommand};
 
 use self::baseline::BaselineCommand;

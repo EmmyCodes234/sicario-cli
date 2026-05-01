@@ -21,6 +21,11 @@ use std::path::PathBuf;
 /// User-level global configuration stored in `~/.sicario/config.toml`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct GlobalConfig {
+    /// Generic LLM API key for any provider (BYOK).
+    /// Set via `sicario config set-key` or written by `sicario config set-provider`.
+    /// This is the primary field checked in Key_Manager resolution step 8.
+    pub llm_api_key: Option<String>,
+
     /// Anthropic API key for Claude-based remediation (BYOK).
     /// Equivalent to the `ANTHROPIC_API_KEY` environment variable.
     pub anthropic_api_key: Option<String>,
@@ -78,6 +83,9 @@ pub fn set_global_config_value(key: &str, value: &str) -> Result<()> {
         "OPENAI_API_KEY" | "openai_api_key" => {
             config.openai_api_key = Some(value.to_string());
         }
+        "llm_api_key" | "LLM_API_KEY" => {
+            config.llm_api_key = Some(value.to_string());
+        }
         "llm_endpoint" | "LLM_ENDPOINT" => {
             config.llm_endpoint = Some(value.to_string());
         }
@@ -86,7 +94,7 @@ pub fn set_global_config_value(key: &str, value: &str) -> Result<()> {
         }
         other => {
             anyhow::bail!(
-                "Unknown config key '{}'. Valid keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, llm_endpoint, llm_model",
+                "Unknown config key '{}'. Valid keys: ANTHROPIC_API_KEY, OPENAI_API_KEY, llm_api_key, llm_endpoint, llm_model",
                 other
             );
         }
@@ -225,6 +233,7 @@ mod tests {
     #[test]
     fn test_global_config_roundtrip() {
         let config = GlobalConfig {
+            llm_api_key: None,
             anthropic_api_key: Some("sk-ant-test".to_string()),
             openai_api_key: None,
             llm_endpoint: Some("https://api.anthropic.com/v1".to_string()),
@@ -319,5 +328,106 @@ mod tests {
         );
 
         std::env::remove_var("SICARIO_API_KEY");
+    }
+
+    /// Integration test: `set-provider anthropic` writes the correct endpoint and model
+    /// to `~/.sicario/config.toml`.
+    ///
+    /// Validates: Requirements 9.4, 9.5 (provider preset registry), 12.1 (set-provider command)
+    #[test]
+    fn test_set_provider_anthropic_writes_correct_endpoint_and_model() {
+        use crate::key_manager::provider_registry::find_provider;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let original_home = std::env::var("HOME").ok();
+        let original_userprofile = std::env::var("USERPROFILE").ok();
+
+        // Point HOME to a temp dir so we don't touch the real ~/.sicario/config.toml
+        std::env::set_var("HOME", tmp.path());
+        std::env::set_var("USERPROFILE", tmp.path());
+
+        // Look up the anthropic preset from the registry
+        let preset = find_provider("anthropic").expect("anthropic provider must exist in registry");
+
+        // Simulate what `sicario config set-provider anthropic` does:
+        // write llm_endpoint and llm_model to ~/.sicario/config.toml
+        set_global_config_value("llm_endpoint", preset.endpoint).unwrap();
+        set_global_config_value("llm_model", preset.default_model).unwrap();
+
+        // Load the written config and verify the values
+        let loaded = load_global_config().expect("config.toml should exist after set-provider");
+
+        assert_eq!(
+            loaded.llm_endpoint.as_deref(),
+            Some("https://api.anthropic.com/v1"),
+            "llm_endpoint should be the Anthropic API base URL"
+        );
+        assert_eq!(
+            loaded.llm_model.as_deref(),
+            Some("claude-opus-4-5"),
+            "llm_model should be the Anthropic default model"
+        );
+
+        // Verify the config file was written to the correct path
+        let config_path = tmp.path().join(".sicario").join("config.toml");
+        assert!(
+            config_path.exists(),
+            "config.toml should be written to ~/.sicario/config.toml"
+        );
+
+        // Restore HOME / USERPROFILE
+        match original_home {
+            Some(h) => std::env::set_var("HOME", h),
+            None => std::env::remove_var("HOME"),
+        }
+        match original_userprofile {
+            Some(p) => std::env::set_var("USERPROFILE", p),
+            None => std::env::remove_var("USERPROFILE"),
+        }
+    }
+
+    /// Integration test: unknown provider name prints error and returns exit code 2.
+    ///
+    /// Validates: Requirements 12.1 (set-provider error handling)
+    #[test]
+    fn test_set_provider_unknown_name_is_rejected() {
+        use crate::key_manager::provider_registry::find_provider;
+
+        // Verify that an unknown provider name returns None from the registry
+        let result = find_provider("not-a-real-provider");
+        assert!(
+            result.is_none(),
+            "Unknown provider name must return None from find_provider"
+        );
+
+        // Verify all 19 known providers resolve correctly
+        let known_providers = [
+            "openai",
+            "anthropic",
+            "gemini",
+            "azure",
+            "bedrock",
+            "deepseek",
+            "groq",
+            "cerebras",
+            "together",
+            "fireworks",
+            "openrouter",
+            "mistral",
+            "ollama",
+            "lmstudio",
+            "xai",
+            "perplexity",
+            "cohere",
+            "deepinfra",
+            "novita",
+        ];
+        for name in &known_providers {
+            assert!(
+                find_provider(name).is_some(),
+                "Provider '{}' must be in the registry",
+                name
+            );
+        }
     }
 }

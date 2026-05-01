@@ -1,6 +1,11 @@
 # Exclude intentional vulnerability test samples from SAST scanning
 test-samples/
 
+# Vulnerable sandbox — deliberately insecure files for testing Sicario.
+# Exclude from production scans so users who clone the repo don't accidentally
+# publish sandbox findings to the Sicario dashboard.
+vuln-sandbox/
+
 # Mock server used for auth integration testing — contains intentional
 # hardcoded credentials and is not production code
 mock-auth-server.py

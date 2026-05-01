@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "sicario-edge": {
+      "command": "sicario",
+      "args": ["mcp"],
+      "disabled": false,
+      "autoApprove": ["analyze_ast_security", "request_remediation_patch", "log_telemetry_audit"]
+    }
+  }
+}

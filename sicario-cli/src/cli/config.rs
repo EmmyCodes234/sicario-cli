@@ -13,7 +13,15 @@ pub struct ConfigCommand {
 pub enum ConfigAction {
     /// Set the LLM API key (stored in OS credential store)
     SetKey,
-    /// Set the LLM provider endpoint and model
+    /// Set the LLM provider by name (e.g. anthropic, openai, groq, ollama).
+    ///
+    /// Sets llm_endpoint and llm_model in ~/.sicario/config.toml.
+    /// Run `sicario config show` to see all 19 supported providers.
+    ///
+    /// Examples:
+    ///   sicario config set-provider anthropic
+    ///   sicario config set-provider groq
+    ///   sicario config set-provider ollama
     SetProvider(SetProviderArgs),
     /// Set a configuration value in ~/.sicario/config.toml
     ///
@@ -24,7 +32,7 @@ pub enum ConfigAction {
     ///   sicario config set OPENAI_API_KEY sk-...
     ///   sicario config set llm_model claude-3-5-sonnet-20241022
     Set(SetArgs),
-    /// Show current configuration
+    /// Show current configuration and all supported providers
     Show,
     /// Delete the stored API key
     DeleteKey,
@@ -33,13 +41,22 @@ pub enum ConfigAction {
 }
 
 /// Arguments for `config set-provider`.
+///
+/// Accepts either a provider name (looked up from the registry) or explicit
+/// `--endpoint` / `--model` flags for custom providers.
 #[derive(Parser, Debug)]
 pub struct SetProviderArgs {
-    /// LLM API endpoint URL
-    #[arg(long)]
-    pub endpoint: String,
+    /// Provider name (e.g. anthropic, openai, groq, ollama).
+    /// Run `sicario config show` to see all 19 supported providers.
+    /// If omitted, --endpoint must be provided.
+    #[arg(value_name = "NAME")]
+    pub name: Option<String>,
 
-    /// LLM model name
+    /// LLM API endpoint URL (overrides the preset endpoint for the named provider)
+    #[arg(long)]
+    pub endpoint: Option<String>,
+
+    /// LLM model name (overrides the preset default model)
     #[arg(long)]
     pub model: Option<String>,
 }

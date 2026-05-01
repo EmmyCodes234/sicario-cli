@@ -39,6 +39,7 @@ pub mod publish;
 pub mod rule_harness;
 pub mod snippet;
 pub mod suppression_learner;
+pub mod telemetry;
 pub mod verification;
 
 #[cfg(test)]
