@@ -7,6 +7,44 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.4] — 2026-05-02
+
+### Fixed
+- **`sicario fix` directory support** — `fix` now accepts a directory path and remediates all findings within it, not just single files.
+- **`sicario fix` embedded rules** — `fix` and the remediation engine now load the full embedded rule set (500+ rules) instead of falling back to disk rules only, matching `scan` behaviour.
+- **Windows UNC path mismatch** — introduced `normalize_path()` to resolve `.` and `..` components without calling `std::fs::canonicalize()`, which produces `\\?\`-prefixed UNC paths on Windows that don't compare equal to plain absolute paths from `read_dir`.
+- **Test isolation on Windows** — `test_set_and_load_global_config` and `test_set_global_config_value_rejects_unknown_key` now set both `HOME` and `USERPROFILE` so `dirs_home()` resolves to the temp directory on all platforms.
+
+---
+
+## [0.2.3] — 2026-05-01
+
+### Fixed
+- Added remaining `serde` rename aliases for all `OwaspCategory` enum variants so OWASP fields round-trip correctly through JSON serialisation.
+
+---
+
+## [0.2.2] — 2026-05-01
+
+### Fixed
+- Added `serde` rename aliases for `OwaspCategory` enum variants to fix JSON deserialisation failures when reading scan results that contain OWASP category fields.
+
+---
+
+## [0.2.1] — 2026-05-01
+
+### Added
+- **Full rule set embedded in binary** — all 500+ YAML rules are now compiled into the binary via `rust-embed`, eliminating the need for a separate rules directory at runtime. `sicario scan` works out of the box on any machine without a `rules/` folder present.
+- **`sicario-rules` community repository scaffold** — initial structure for the Apache 2.0 community rules repo at [github.com/sicario-labs/sicario-rules](https://github.com/sicario-labs/sicario-rules).
+
+### Fixed
+- Marked `embedded_rules` doctest as `no_run` to fix doctest compilation failure in `cargo test`.
+- Rewrote `install.sh` and `install.ps1` to correctly resolve v0.2.x release asset names and download URLs.
+- Fixed Homebrew formula (`Formula/sicario.rb`) — corrected org name, artifact names, and placeholder strings for tap auto-update.
+- Release workflow tag resolution now uses the GitHub redirect (`/releases/latest`) to find the current tag; added `make_latest: true` to the release job.
+
+---
+
 ## [0.2.0] — 2026-05-01
 
 ### Added
@@ -143,3 +181,7 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 [0.1.7]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.1.7
 
 [0.2.0]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.0
+[0.2.1]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.1
+[0.2.2]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.2
+[0.2.3]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.3
+[0.2.4]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.4

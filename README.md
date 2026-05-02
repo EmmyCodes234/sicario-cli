@@ -47,7 +47,7 @@ $ sicario scan .
 
   ╭──────────────────────────────────────────────────────────╮
   │  Findings: 1  (C:1  H:0  M:0  L:0)                      │
-  │  Duration: 3.5s · 331 rules · 125 files                  │
+  │  Duration: 3.5s · 500+ rules · 125 files                 │
   ╰──────────────────────────────────────────────────────────╯
 ```
 
@@ -126,6 +126,9 @@ sicario scan . --format sarif --sarif-output results.sarif
 
 # AI-powered fix for a specific finding
 sicario fix src/db.js --rule js/sql-injection
+
+# AI-powered fix for all findings in a directory
+sicario fix src/ --rule js/sql-injection
 
 # Generate an OWASP Top 10 compliance report
 sicario report .
