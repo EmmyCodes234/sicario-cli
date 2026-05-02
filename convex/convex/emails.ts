@@ -20,7 +20,7 @@ function getResend(): Resend {
   return new Resend(key);
 }
 
-const FROM = "Sicario <noreply@usesicario.xyz>";
+const FROM = "Emmanuel from Sicario <noreply@usesicario.xyz>";
 
 // ── Shared design tokens ──────────────────────────────────────────────────────
 
