@@ -542,6 +542,45 @@ http.route({
         to: "active",
       });
 
+      // 12.5. Send critical findings alert email to org admins if critical/high findings found
+      const criticalCount = findings.filter((f: any) => f.severity === "Critical").length;
+      const highCount = findings.filter((f: any) => f.severity === "High").length;
+      if (criticalCount > 0 || highCount > 0) {
+        try {
+          const { sendCriticalFindingsAlertEmail } = await import("./emails");
+          // Get org memberships to find admins/managers (direct db query from httpAction)
+          const orgMemberships: any[] = await (ctx as any).db
+            .query("memberships")
+            .withIndex("by_orgId", (q: any) => q.eq("orgId", orgId!))
+            .collect();
+          const adminMembers = orgMemberships.filter(
+            (m: any) => m.role === "admin" || m.role === "manager"
+          );
+          // Get project name
+          const project = orgProjects.find((p: any) => p.id === body.projectId);
+          const projectName = project?.name ?? body.projectId;
+          for (const member of adminMembers) {
+            try {
+              const user = await (ctx as any).db.get(member.userId as any);
+              const email = (user as any)?.email;
+              if (email) {
+                await sendCriticalFindingsAlertEmail(
+                  email,
+                  projectName,
+                  body.scanId,
+                  criticalCount,
+                  highCount,
+                  findings.length,
+                  body.repositoryUrl,
+                );
+              }
+            } catch { /* non-fatal */ }
+          }
+        } catch (err) {
+          console.error("Failed to send critical findings alert:", err);
+        }
+      }
+
       // 13. Return success
       return new Response(
         JSON.stringify({

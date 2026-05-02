@@ -17,4 +17,18 @@ crons.monthly(
   internal.billing.resetAllSeatCounts,
 );
 
+// Send weekly digest every Monday at 8:00 AM UTC
+crons.weekly(
+  "weekly-digest-emails",
+  { dayOfWeek: "monday", hourUTC: 8, minuteUTC: 0 },
+  internal.emailJobs.sendWeeklyDigests,
+);
+
+// Send inactivity nudge every Wednesday at 10:00 AM UTC
+crons.weekly(
+  "inactivity-nudge-emails",
+  { dayOfWeek: "wednesday", hourUTC: 10, minuteUTC: 0 },
+  internal.emailJobs.sendInactivityNudges,
+);
+
 export default crons;

@@ -174,6 +174,33 @@ export const updateSubscription = mutation({
     if (args.trialEndsAt        !== undefined) patch.trialEndsAt        = args.trialEndsAt;
 
     await ctx.db.patch(sub._id, patch);
+
+    // Send plan upgrade email (non-fatal)
+    if (args.plan && args.plan !== "free") {
+      try {
+        const { sendPlanUpgradeEmail } = await import("./emails");
+        const org = await ctx.db
+          .query("organizations")
+          .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+          .first();
+        const orgName = org?.name ?? args.orgId;
+        // Get admin email
+        const memberships = await ctx.db
+          .query("memberships")
+          .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+          .collect();
+        const admin = memberships.find((m) => m.role === "admin");
+        if (admin) {
+          const user = await ctx.db.get(admin.userId as any);
+          const email = (user as any)?.email;
+          if (email) {
+            await sendPlanUpgradeEmail(email, orgName, args.plan, args.billingCycle ?? "monthly");
+          }
+        }
+      } catch (err) {
+        console.error("Failed to send plan upgrade email:", err);
+      }
+    }
   },
 });
 

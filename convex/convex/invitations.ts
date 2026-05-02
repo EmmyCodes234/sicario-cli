@@ -60,6 +60,20 @@ export const create = mutation({
       createdAt: now,
     });
 
+    // Send invitation email (non-fatal)
+    try {
+      const { sendInvitationEmail } = await import("./emails");
+      // Get org name
+      const org = await ctx.db
+        .query("organizations")
+        .withIndex("by_orgId", (q) => q.eq("orgId", args.orgId))
+        .first();
+      const orgName = org?.name ?? "your organization";
+      await sendInvitationEmail(normalizedEmail, orgName, args.role, args.callerUserId);
+    } catch (err) {
+      console.error("Failed to send invitation email:", err);
+    }
+
     return { status: "invited" as const, email: normalizedEmail };
   },
 });
