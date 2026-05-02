@@ -657,6 +657,27 @@ impl RemediationEngine {
                     for f in rule_files {
                         let _ = eng.load_rules(f);
                     }
+                    // If no rules loaded from disk (installed binary), use embedded rules
+                    if eng.get_rules().is_empty() {
+                        for (path, yaml_content) in crate::embedded_rules::iter_embedded_rules() {
+                            match serde_yaml::from_str::<
+                                Vec<crate::engine::security_rule::SecurityRule>,
+                            >(&yaml_content)
+                            {
+                                Ok(rules) => {
+                                    for rule in rules {
+                                        let _ = eng.load_rule_direct(rule);
+                                    }
+                                }
+                                Err(e) => {
+                                    tracing::warn!("Skipping embedded rule '{}': {}", path, e);
+                                }
+                            }
+                        }
+                        if eng.get_rules().is_empty() {
+                            eng.load_default_rules();
+                        }
+                    }
                     let parent = file_path.parent().unwrap_or(&cwd);
                     let target_str = file_path
                         .to_string_lossy()

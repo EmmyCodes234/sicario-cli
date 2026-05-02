@@ -6,6 +6,7 @@
 
 mod auth;
 mod cloud;
+mod embedded_rules;
 mod engine;
 mod mcp;
 mod onboarding;
@@ -251,7 +252,7 @@ pub fn load_rules_from_dir(
 ///
 /// Returns the number of rule files successfully parsed.
 fn load_embedded_rules_into(eng: &mut engine::sast_engine::SastEngine) -> usize {
-    use sicario_cli::embedded_rules::iter_embedded_rules;
+    use crate::embedded_rules::iter_embedded_rules;
 
     let mut files_loaded = 0usize;
     for (path, yaml_content) in iter_embedded_rules() {
@@ -1720,6 +1721,25 @@ fn cmd_rules(args: cli::rules::RulesCommand) -> Result<ExitCode> {
 
 // ─── Fix command ──────────────────────────────────────────────────────────────
 
+/// Normalise a path by resolving `.` and `..` components without calling
+/// `std::fs::canonicalize()`.  Canonicalize is avoided because on Windows it
+/// produces UNC-prefixed paths (`\\?\C:\...`) that don't compare equal to the
+/// plain absolute paths returned by `std::fs::read_dir`.
+fn normalize_path(path: &std::path::Path) -> PathBuf {
+    use std::path::Component;
+    let mut out = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {} // skip `.`
+            Component::ParentDir => {
+                out.pop(); // resolve `..`
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
     use remediation::iteration_guard::IterationGuard;
     use remediation::remediation_engine::RemediationEngine;
@@ -1757,13 +1777,34 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
     } else {
         cwd.join(&file_path)
     };
+    // Normalise away any `.` or `..` components that were introduced by a
+    // `./`-prefixed argument (e.g. `./app/data/user-dao.js`).  We cannot use
+    // `canonicalize()` here because on Windows it produces UNC-prefixed paths
+    // (`\\?\C:\...`) that don't compare equal to the plain absolute paths
+    // returned by `std::fs::read_dir`.
+    let file_path = normalize_path(&file_path);
 
-    // Scan the file to find vulnerabilities
+    let is_dir = file_path.is_dir();
+
+    // Scan the file/directory to find vulnerabilities.
+    // Use embedded rules (same as cmd_scan) so the full 500+ rule set is active.
+    let scan_root = if is_dir {
+        file_path.clone()
+    } else {
+        file_path.parent().unwrap_or(&cwd).to_path_buf()
+    };
     let mut eng = engine::sast_engine::SastEngine::new(&cwd)?;
-    for f in discover_bundled_rules() {
-        let _ = eng.load_rules(&f);
+    let embedded_count = load_embedded_rules_into(&mut eng);
+    if embedded_count == 0 {
+        // Fallback: try disk rules (dev environment)
+        for f in discover_bundled_rules() {
+            let _ = eng.load_rules(&f);
+        }
+        if eng.get_rules().is_empty() {
+            eng.load_default_rules();
+        }
     }
-    let vulns = eng.scan_directory(file_path.parent().unwrap_or(&cwd))?;
+    let vulns = eng.scan_directory(&scan_root)?;
 
     // Normalise both sides to lowercase strings for a case-insensitive,
     // separator-insensitive comparison (handles Windows drive-letter casing
@@ -1773,15 +1814,22 @@ fn cmd_fix(args: cli::fix::FixArgs) -> Result<ExitCode> {
         .replace('\\', "/")
         .to_lowercase();
 
-    // Filter to the target file and optionally the specified rule
+    // Filter to the target file (or all files under the target directory)
+    // and optionally the specified rule.
     let file_vulns: Vec<_> = vulns
         .iter()
         .filter(|v| {
-            v.file_path
+            let vpath = v
+                .file_path
                 .to_string_lossy()
                 .replace('\\', "/")
-                .to_lowercase()
-                == target
+                .to_lowercase();
+            if is_dir {
+                // Directory: match any file whose path starts with the target dir
+                vpath.starts_with(&target)
+            } else {
+                vpath == target
+            }
         })
         .filter(|v| args.rule.as_ref().is_none_or(|r| v.rule_id == *r))
         .collect();
