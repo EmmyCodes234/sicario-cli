@@ -7,6 +7,13 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ---
 
+## [0.2.5] — 2026-05-02
+
+### Fixed
+- **Critical: embedded rules always load on installed binaries** — `cmd_scan` was calling `discover_bundled_rules()` before attempting embedded rules. If the user's working directory happened to contain a `rules/` folder (e.g. a project with its own YAML configs), those 8 files would be loaded instead of the 500+ embedded rules. Embedded rules now always load first; disk discovery is only used as a dev-mode fallback when the embedded set is empty.
+
+---
+
 ## [0.2.4] — 2026-05-02
 
 ### Fixed
@@ -184,4 +191,5 @@ This project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 [0.2.1]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.1
 [0.2.2]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.2
 [0.2.3]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.3
+[0.2.5]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.5
 [0.2.4]: https://github.com/sicario-labs/sicario-cli/releases/tag/v0.2.4

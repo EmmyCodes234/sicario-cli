@@ -293,30 +293,35 @@ fn cmd_scan(args: cli::scan::ScanArgs) -> Result<ExitCode> {
     );
 
     let explicit: Vec<PathBuf> = args.rules.iter().map(PathBuf::from).collect();
-    let rule_files = if explicit.is_empty() {
-        discover_bundled_rules()
-    } else {
-        explicit
-    };
 
     let mut eng = SastEngine::new(&dir)?;
     let mut rules_loaded = 0usize;
 
-    if rule_files.is_empty() {
-        // No explicit --rules flag and no rules/ directory found on disk.
-        // Load the full rule set embedded in the binary at compile time.
-        // This is the normal production path for installed binaries.
+    if !explicit.is_empty() {
+        // User passed explicit --rules flags — load only those files.
+        for f in &explicit {
+            if eng.load_rules(f).is_ok() {
+                rules_loaded += 1;
+            }
+        }
+    } else {
+        // Normal path: always load the full embedded rule set first.
+        // This is the production path — 500+ rules compiled into the binary.
         rules_loaded = load_embedded_rules_into(&mut eng);
         tracing::debug!(
             "Loaded {} embedded rule files ({} rules)",
             rules_loaded,
             eng.get_rules().len()
         );
-    } else {
-        // Explicit --rules flag or rules/ directory found on disk (dev/CI path).
-        for f in &rule_files {
-            if eng.load_rules(f).is_ok() {
-                rules_loaded += 1;
+
+        // If embedded rules produced nothing (dev build without rust-embed),
+        // fall back to rules/ on disk so development still works.
+        if eng.get_rules().is_empty() {
+            let disk_files = discover_bundled_rules();
+            for f in &disk_files {
+                if eng.load_rules(f).is_ok() {
+                    rules_loaded += 1;
+                }
             }
         }
     }
