@@ -36,18 +36,48 @@ function Resolve-Version {
   }
 
   Write-Step "Fetching latest release version..."
-  $apiUrl = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+
+  # Use the GitHub releases/latest redirect — resolves to the most recent
+  # non-prerelease, non-draft release without needing an API token.
+  $latestUrl = "https://github.com/$GITHUB_REPO/releases/latest"
 
   try {
-    $response = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -ErrorAction Stop
-    $version  = $response.tag_name
-    if (-not $version) { Fail "GitHub API returned no tag_name. Set `$env:SICARIO_VERSION` and retry." }
-    Write-Step "Latest version: $version"
-    return $version
+    $response = Invoke-WebRequest -Uri $latestUrl -UseBasicParsing -MaximumRedirection 0 -ErrorAction SilentlyContinue
+    # 302 redirect — Location header contains the tag URL
+    $location = $response.Headers["Location"]
+    if ($location) {
+      $version = Split-Path $location -Leaf
+      if ($version -and $version -ne "latest") {
+        Write-Step "Latest version: $version"
+        return $version
+      }
+    }
   }
   catch {
-    Fail "Could not fetch latest version from GitHub API: $_`nSet `$env:SICARIO_VERSION explicitly and retry."
+    # Redirect throws on some PS versions — extract from exception
+    $location = $_.Exception.Response.Headers["Location"]
+    if ($location) {
+      $version = Split-Path $location -Leaf
+      if ($version -and $version -ne "latest") {
+        Write-Step "Latest version: $version"
+        return $version
+      }
+    }
   }
+
+  # Fallback: GitHub API
+  try {
+    $apiUrl  = "https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    $resp    = Invoke-RestMethod -Uri $apiUrl -UseBasicParsing -ErrorAction Stop
+    $version = $resp.tag_name
+    if ($version) {
+      Write-Step "Latest version: $version"
+      return $version
+    }
+  }
+  catch { }
+
+  Fail "Could not determine the latest release version. Set `$env:SICARIO_VERSION` explicitly and retry."
 }
 
 # ── Choose install directory ───────────────────────────────────────────────────

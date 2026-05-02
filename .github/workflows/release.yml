@@ -139,6 +139,7 @@ jobs:
         with:
           tag_name: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.ref_name }}
           generate_release_notes: true
+          make_latest: true
           files: |
             ${{ env.BIN }}-linux-amd64.tar.gz
             ${{ env.BIN }}-linux-amd64.tar.gz.sha256

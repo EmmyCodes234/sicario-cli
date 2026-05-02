@@ -104,17 +104,34 @@ resolve_version() {
   fi
 
   say "Fetching latest release version..."
-  local api_url="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
-  local tmp
-  tmp="$(mktemp)"
 
-  if ! download "$api_url" "$tmp"; then
-    rm -f "$tmp"
-    die "Could not reach GitHub API. Set SICARIO_VERSION explicitly and retry."
+  # Use the GitHub releases/latest redirect — it resolves to the tag of the
+  # most recent non-prerelease, non-draft release without needing the API.
+  # The redirect URL is: https://github.com/<owner>/<repo>/releases/latest
+  # which 302s to: https://github.com/<owner>/<repo>/releases/tag/<version>
+  local latest_url="https://github.com/$GITHUB_REPO/releases/latest"
+  local resolved_url
+
+  if command -v curl > /dev/null 2>&1; then
+    resolved_url="$(curl --proto '=https' --tlsv1.2 -fsSLI -o /dev/null -w '%{url_effective}' "$latest_url" 2>/dev/null)"
+  elif command -v wget > /dev/null 2>&1; then
+    resolved_url="$(wget -q --https-only --server-response --spider "$latest_url" 2>&1 | grep -i 'Location:' | tail -1 | awk '{print $2}' | tr -d '\r')"
+  else
+    die "Neither curl nor wget is available. Install one and retry."
   fi
 
-  VERSION="$(grep -o '"tag_name": *"[^"]*"' "$tmp" | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
-  rm -f "$tmp"
+  VERSION="$(basename "$resolved_url")"
+
+  # Fallback: try the GitHub API if the redirect approach failed
+  if [ -z "$VERSION" ] || [ "$VERSION" = "latest" ]; then
+    local api_url="https://api.github.com/repos/$GITHUB_REPO/releases/latest"
+    local tmp
+    tmp="$(mktemp)"
+    if download "$api_url" "$tmp" 2>/dev/null; then
+      VERSION="$(grep -o '"tag_name": *"[^"]*"' "$tmp" | head -1 | sed 's/.*"tag_name": *"\([^"]*\)".*/\1/')"
+    fi
+    rm -f "$tmp"
+  fi
 
   if [ -z "$VERSION" ]; then
     die "Could not determine the latest release version. Set SICARIO_VERSION explicitly and retry."
